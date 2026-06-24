@@ -1,106 +1,394 @@
-"use client";
+'use client'
 
-import { useState } from "react";
-import Link from "next/link";
+import { useState, useEffect } from 'react'
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
+import { rolloverPolicyCycle, scanAndGenerateAllReminders } from '@/lib/reminders/reminder-service'
+import ReminderModal from '@/components/reminders/reminder-modal'
 import {
   Bell,
+  Plus,
+  Loader2,
+  CheckCircle,
   Clock,
-  Pause,
-  CheckCircle2,
-  CalendarHeart,
-  Wallet,
-  ClipboardList,
-  Tag,
-  Camera,
-} from "lucide-react";
+  Trash2,
+  Calendar,
+  Sparkles,
+  Search,
+  Filter,
+  SlidersHorizontal,
+  ChevronRight,
+  AlertTriangle
+} from 'lucide-react'
+import { differenceInDays, parseISO, format, addDays } from 'date-fns'
 
-const tabs = [
-  { key: "all", label: "All", icon: Bell },
-  { key: "pending", label: "Pending", icon: Clock },
-  { key: "snoozed", label: "Snoozed", icon: Pause },
-  { key: "done", label: "Done", icon: CheckCircle2 },
-] as const;
-type TabKey = (typeof tabs)[number]["key"];
+interface Reminder {
+  id: string
+  customer_id: string
+  policy_id: string | null
+  reminder_type: 'premium_due' | 'birthday' | 'financial_review' | 'general' | 'follow_up'
+  title: string
+  description: string | null
+  due_date: string
+  reminder_offset_days: number
+  status: 'pending' | 'done' | 'snoozed' | 'cancelled'
+  priority: 'low' | 'normal' | 'high' | 'urgent'
+  next_action_date: string | null
+  completed_at: string | null
+  customers: {
+    full_name: string
+  } | null
+}
 
-const typeGroups = [
-  { key: "all", label: "All Types", icon: Tag },
-  { key: "premium", label: "Premium Due", icon: Wallet },
-  { key: "birthday", label: "Birthday", icon: CalendarHeart },
-  { key: "review", label: "Financial Review", icon: ClipboardList },
-  { key: "general", label: "General", icon: Bell },
-] as const;
-type TypeKey = (typeof typeGroups)[number]["key"];
+const statusTabs = [
+  { value: 'all', label: 'All (ทั้งหมด)' },
+  { value: 'pending', label: 'Pending (รอดำเนินการ)' },
+  { value: 'snoozed', label: 'Snoozed (เลื่อนนัด)' },
+  { value: 'done', label: 'Done (เสร็จสิ้น)' },
+  { value: 'cancelled', label: 'Cancelled (ยกเลิก)' },
+]
 
 export default function RemindersPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("all");
-  const [activeType, setActiveType] = useState<TypeKey>("all");
+  const supabase = createClient() as any
+  const [loading, setLoading] = useState(true)
+  const [reminders, setReminders] = useState<Reminder[]>([])
+  
+  // Filtering & Modal state
+  const [activeTab, setActiveTab] = useState('pending')
+  const [selectedType, setSelectedType] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedReminder, setSelectedReminder] = useState<Reminder | null>(null)
+  const [actionId, setActionId] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
+
+  const loadReminders = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      let query = supabase
+        .from('reminders')
+        .select('*, customers(full_name)')
+
+      // Apply Search Filter
+      if (searchQuery.trim()) {
+        query = query.ilike('title', `%${searchQuery.trim()}%`)
+      }
+
+      // Apply Status Tab Filter
+      if (activeTab !== 'all') {
+        query = query.eq('status', activeTab)
+      }
+
+      // Apply Reminder Type Filter
+      if (selectedType !== 'all') {
+        query = query.eq('reminder_type', selectedType)
+      }
+
+      // Sort by due date (closest/past due first)
+      query = query.order('due_date', { ascending: true })
+
+      const { data, error } = await query
+      if (error) throw error
+      setReminders(data || [])
+    } catch (err) {
+      console.error('Error fetching reminders:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    // Run initial background scan when loading reminders page
+    async function initScan() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      setIsScanning(true)
+      try {
+        await scanAndGenerateAllReminders(supabase, user.id)
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setIsScanning(false)
+        loadReminders()
+      }
+    }
+    initScan()
+  }, [activeTab, selectedType, searchQuery, supabase])
+
+  const handleMarkDone = async (reminder: Reminder) => {
+    setActionId(reminder.id)
+    try {
+      if (reminder.reminder_type === 'premium_due' && reminder.policy_id) {
+        // Triggers dates rollover and next cycle tasks creation
+        await rolloverPolicyCycle(supabase, reminder.policy_id, reminder.id)
+      } else {
+        await supabase
+          .from('reminders')
+          .update({ status: 'done', completed_at: new Date().toISOString() })
+          .eq('id', reminder.id)
+      }
+      loadReminders()
+    } catch (err) {
+      console.error('Error completing reminder:', err)
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  const handleSnooze = async (reminder: Reminder) => {
+    setActionId(reminder.id)
+    try {
+      // Add 3 days to due date as a default snooze period
+      const newDueDate = addDays(parseISO(reminder.due_date), 3)
+      const newDueDateStr = newDueDate.toISOString().split('T')[0]
+
+      await supabase
+        .from('reminders')
+        .update({
+          status: 'snoozed',
+          due_date: newDueDateStr,
+          next_action_date: newDueDateStr,
+        })
+        .eq('id', reminder.id)
+      loadReminders()
+    } catch (err) {
+      console.error('Error snoozing reminder:', err)
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  const handleCancel = async (reminder: Reminder) => {
+    setActionId(reminder.id)
+    try {
+      await supabase
+        .from('reminders')
+        .update({ status: 'cancelled' })
+        .eq('id', reminder.id)
+      loadReminders()
+    } catch (err) {
+      console.error('Error cancelling reminder:', err)
+    } finally {
+      setActionId(null)
+    }
+  }
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'urgent':
+        return 'bg-red-100 text-red-700 border-red-200'
+      case 'high':
+        return 'bg-orange-100 text-orange-700 border-orange-200'
+      case 'normal':
+        return 'bg-blue-100 text-blue-700 border-blue-200'
+      case 'low':
+      default:
+        return 'bg-slate-100 text-slate-700 border-slate-200'
+    }
+  }
+
+  const getReminderIconBg = (type: string) => {
+    switch (type) {
+      case 'premium_due':
+        return 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400'
+      case 'birthday':
+        return 'bg-pink-50 text-pink-600 dark:bg-pink-950/40 dark:text-pink-400'
+      case 'financial_review':
+        return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400'
+      case 'follow_up':
+      case 'general':
+      default:
+        return 'bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-400'
+    }
+  }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Reminders</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Stay on top of follow-ups and important dates
-        </p>
-      </div>
-
-      {/* Tab Filters */}
-      <div className="mb-4 flex gap-1 rounded-2xl bg-slate-100 p-1">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-semibold transition-all ${
-              activeTab === tab.key
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            <tab.icon className="h-3.5 w-3.5" />
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Type Groups */}
-      <div className="mb-6 flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-        {typeGroups.map((type) => (
-          <button
-            key={type.key}
-            onClick={() => setActiveType(type.key)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-              activeType === type.key
-                ? "bg-amber-500 text-white shadow-sm"
-                : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-            }`}
-          >
-            <type.icon className="h-3.5 w-3.5" />
-            {type.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Empty State */}
-      <div className="rounded-2xl border border-slate-100 bg-white p-10 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-amber-100 to-orange-100">
-          <Bell className="h-8 w-8 text-amber-500" />
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            Reminders (การแจ้งเตือน)
+            {(loading || isScanning) && <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />}
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">Manage automated and manual CRM schedules.</p>
         </div>
-        <h3 className="text-base font-semibold text-slate-800">
-          No reminders yet
-        </h3>
-        <p className="mx-auto mt-2 max-w-xs text-sm text-slate-500">
-          Reminders are auto-generated when you add customers with policy
-          renewal dates and birthdays.
-        </p>
         <Link
-          href="/import"
-          className="mt-6 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-amber-500/25 transition-transform active:scale-[0.98]"
+          href="/reminders/new"
+          className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/10 transition-transform active:scale-95"
+          title="Add Reminder"
         >
-          <Camera className="h-4 w-4" />
-          Import Customers
+          <Plus className="h-5 w-5" />
         </Link>
       </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 overflow-x-auto pb-[1px] gap-2">
+        {statusTabs.map((tab) => {
+          const isActive = activeTab === tab.value
+          return (
+            <button
+              key={tab.value}
+              onClick={() => {
+                setActiveTab(tab.value)
+                setLoading(true)
+              }}
+              className={`py-3 px-4 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${
+                isActive
+                  ? 'border-indigo-600 text-indigo-650 font-black'
+                  : 'border-transparent text-slate-400 hover:text-slate-650'
+              }`}
+            >
+              {tab.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Search and filter type controls */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="relative sm:col-span-2">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            type="search"
+            placeholder="Search reminders by title..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full h-10 pl-10 pr-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900 text-xs placeholder:text-slate-400 focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <select
+            value={selectedType}
+            onChange={(e) => setSelectedType(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs focus:outline-none"
+          >
+            <option value="all">All Types (ทุกประเภท)</option>
+            <option value="premium_due">Premium Due</option>
+            <option value="birthday">Birthday</option>
+            <option value="financial_review">Financial Review</option>
+            <option value="general">General</option>
+            <option value="follow_up">Follow Up</option>
+          </select>
+        </div>
+      </div>
+
+      {/* List cards */}
+      {loading ? (
+        <div className="flex h-40 items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        </div>
+      ) : reminders.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center shadow-sm">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400 mb-4">
+            <Bell className="h-6 w-6" />
+          </div>
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">No Reminders Found</h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+            You are all caught up! No scheduled tasks match this status filter.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {reminders.map((reminder) => {
+            const today = new Date().toISOString().split('T')[0]
+            const isOverdue = reminder.status === 'pending' && reminder.due_date < today
+
+            return (
+              <div
+                key={reminder.id}
+                onClick={() => setSelectedReminder(reminder)}
+                className={`p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-900 flex justify-between items-center gap-4 transition-all hover:shadow-md cursor-pointer ${
+                  isOverdue ? 'border-l-4 border-l-red-500' : ''
+                }`}
+              >
+                <div className="flex items-center gap-4 flex-1 min-w-0">
+                  <div className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 ${getReminderIconBg(reminder.reminder_type)}`}>
+                    <Bell className="h-5 w-5" />
+                  </div>
+
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border uppercase ${getPriorityColor(reminder.priority)}`}>
+                        {reminder.priority}
+                      </span>
+                      <span className="text-[9px] font-semibold text-slate-500 flex items-center gap-0.5">
+                        <Calendar className="h-3 w-3" />
+                        {reminder.due_date}
+                      </span>
+                      {isOverdue && (
+                        <span className="text-[9px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-0.5">
+                          <AlertTriangle className="h-2.5 w-2.5" /> OVERDUE
+                        </span>
+                      )}
+                    </div>
+
+                    <h3 className="text-xs font-bold text-slate-900 dark:text-white leading-tight truncate">
+                      {reminder.title}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 font-semibold truncate">
+                      Client: {reminder.customers?.full_name || '—'}
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  className="flex gap-1.5 shrink-0"
+                  onClick={(e) => e.stopPropagation()} // Stop modal trigger
+                >
+                  {reminder.status === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => handleMarkDone(reminder)}
+                        disabled={actionId === reminder.id}
+                        className="h-8 px-3 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold hover:bg-indigo-100 transition-colors"
+                        title="Mark Done"
+                      >
+                        {actionId === reminder.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          'Done'
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleSnooze(reminder)}
+                        disabled={actionId === reminder.id}
+                        className="h-8 px-3 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-100 transition-colors"
+                        title="Snooze 3 days"
+                      >
+                        Snooze
+                      </button>
+                      <button
+                        onClick={() => handleCancel(reminder)}
+                        disabled={actionId === reminder.id}
+                        className="h-8 px-3 bg-red-50 text-red-650 rounded-lg text-[10px] font-bold hover:bg-red-100 transition-colors"
+                        title="Cancel"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                  <ChevronRight className="h-5 w-5 text-slate-400 shrink-0 self-center" />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Reminder Action Drawer/Modal */}
+      {selectedReminder && (
+        <ReminderModal
+          reminder={selectedReminder}
+          onClose={() => setSelectedReminder(null)}
+          onSaved={() => {
+            setSelectedReminder(null)
+            loadReminders()
+          }}
+        />
+      )}
     </div>
-  );
+  )
 }

@@ -21,6 +21,21 @@ FollowFlow is a mobile-first, production-ready insurance customer follow-up CRM 
   - Filters for status (`active`, `pending`, `lapsed`, etc.), payment frequencies, and sorting by next premium due dates.
   - CRUD operations: Manually write/edit policies and save detailed policy notes.
 
+### Phase 3: Reminder Engine & Priority Dashboard
+- **Reminder Generation Engine:** (`src/lib/reminders/reminder-service.ts`)
+  - Birthday reminders: Generates reminders 30 days and 1 day before occurrences.
+  - Financial review reminders: Triggers review tasks every 6 months.
+  - Premium due reminders: Calculates 5 offsets (30, 14, 7, 3, 1 day) before policy dues.
+  - Self-healing background scanner to auto-generate missing reminders.
+  - Payment cycle rollover: Automatically increments the policy due date and spins up the next cycle's reminders when marked `Done`.
+- **Reminder List & Management UI:** (`src/app/(dashboard)/reminders/page.tsx`)
+  - Status tabs (`All`, `Pending`, `Snoozed`, `Done`, `Cancelled`).
+  - Search and filter options by reminder type.
+  - Action modal drawer (`reminder-modal.tsx`) for notes edit and date rescheduling.
+- **Priority Action Dashboard:** (`src/app/(dashboard)/page.tsx`)
+  - Dashboard counts dynamically linked to live customer, policy, and reminder tables.
+  - A 10-level priority ranking algorithm consolidating critical alerts (overdue, immediate premium due, Watchlist customers, VIP outreach) into a scrollable unified feed.
+
 ---
 
 ## 🛠️ Getting Started
