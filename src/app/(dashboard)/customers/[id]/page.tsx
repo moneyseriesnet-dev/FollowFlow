@@ -127,9 +127,19 @@ export default function CustomerDetailPage() {
   // Modals / forms state
   const [showActivityForm, setShowActivityForm] = useState(false)
   const [selectedActivity, setSelectedActivity] = useState<any>(null)
+  const [showActivityDropdown, setShowActivityDropdown] = useState(false)
+  const [defaultActivityType, setDefaultActivityType] = useState<string | undefined>(undefined)
+  const [defaultActivitySummary, setDefaultActivitySummary] = useState<string | undefined>(undefined)
   const [showGiftForm, setShowGiftForm] = useState(false)
   const [selectedGift, setSelectedGift] = useState<any>(null)
   const [activeReminder, setActiveReminder] = useState<any>(null)
+
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
 
   const loadAllData = async () => {
     try {
@@ -476,7 +486,22 @@ export default function CustomerDetailPage() {
     )
   }
 
-  const pendingReminders = reminders.filter(r => r.status === 'pending' || r.status === 'snoozed')
+  // Deduplicate: keep only the latest (closest upcoming) reminder per type per policy.
+  // For premium_due we group by (reminder_type + policy_id), for others by reminder_type alone.
+  const pendingReminders = (() => {
+    const allPending = reminders.filter(r => r.status === 'pending' || r.status === 'snoozed')
+    const seen = new Map<string, (typeof allPending)[0]>()
+    for (const rem of allPending) {
+      const key = rem.reminder_type === 'premium_due' && rem.policy_id
+        ? `${rem.reminder_type}:${rem.policy_id}`
+        : rem.reminder_type
+      const existing = seen.get(key)
+      if (!existing || rem.due_date > existing.due_date) {
+        seen.set(key, rem)
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.due_date.localeCompare(b.due_date))
+  })()
   const totalGiftsCost = gifts.reduce((acc, curr) => acc + (Number(curr.gift_cost) || 0), 0)
 
   return (
@@ -540,9 +565,78 @@ export default function CustomerDetailPage() {
             {customer.full_name.slice(0, 2).toUpperCase()}
           </div>
           <div className="space-y-1.5">
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white leading-none">
-              {customer.full_name}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-slate-900 dark:text-white leading-none">
+                {customer.full_name}
+              </h1>
+              <div className="relative">
+                <button
+                  onClick={() => setShowActivityDropdown(!showActivityDropdown)}
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-650 dark:text-indigo-400 hover:bg-indigo-100/80 dark:hover:bg-indigo-900/50 border border-indigo-150/50 dark:border-indigo-900/40 transition-all active:scale-95 shadow-sm cursor-pointer"
+                  title="Add Activity (เพิ่มกิจกรรม)"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                {showActivityDropdown && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-10" 
+                      onClick={() => setShowActivityDropdown(false)}
+                    />
+                    <div className="absolute left-0 mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 p-2 shadow-xl border border-slate-200 dark:border-slate-800 z-20 text-xs text-slate-700 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <div className="px-3 py-2 font-bold text-slate-400 dark:text-slate-500 text-[10px] uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/60 pb-1 mb-1">
+                        Quick Add Activity (บันทึกกิจกรรมด่วน)
+                      </div>
+                      <button
+                        onClick={() => {
+                          setDefaultActivityType('meeting')
+                          setDefaultActivitySummary('ออกไปให้ของขวัญ')
+                          setShowActivityForm(true)
+                          setShowActivityDropdown(false)
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                      >
+                        <span className="text-base shrink-0">🎁</span>
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">ออกไปให้ของขวัญ</div>
+                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log meeting to deliver a gift</div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDefaultActivityType('meeting')
+                          setDefaultActivitySummary('เยี่ยมลูกค้า')
+                          setShowActivityForm(true)
+                          setShowActivityDropdown(false)
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                      >
+                        <span className="text-base shrink-0">👥</span>
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">เยี่ยมลูกค้า</div>
+                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log client visit meeting</div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDefaultActivityType('meeting')
+                          setDefaultActivitySummary('นัดวางแผนการเงินอัปเดต')
+                          setShowActivityForm(true)
+                          setShowActivityDropdown(false)
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                      >
+                        <span className="text-base shrink-0">📅</span>
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">นัดวางแผนการเงิน (อัปเดต)</div>
+                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log financial planning session</div>
+                        </div>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span
                 className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase"
@@ -942,7 +1036,10 @@ export default function CustomerDetailPage() {
 
           {/* Statistics Metrics Cards */}
           <div className="grid grid-cols-3 gap-4">
-            <div className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3">
+            <button
+              onClick={() => scrollToSection('reminders-section')}
+              className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3 text-left w-full hover:border-indigo-400 dark:hover:border-indigo-800 hover:shadow-xs active:scale-98 transition-all cursor-pointer"
+            >
               <div className="h-9 w-9 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
                 <Bell className="h-4.5 w-4.5" />
               </div>
@@ -950,9 +1047,12 @@ export default function CustomerDetailPage() {
                 <span className="block text-slate-400 font-bold uppercase text-[9px] tracking-wide">Reminders</span>
                 <span className="font-semibold text-slate-850 dark:text-slate-200">{pendingReminders.length} Pending</span>
               </div>
-            </div>
+            </button>
 
-            <div className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3">
+            <button
+              onClick={() => scrollToSection('activities-section')}
+              className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3 text-left w-full hover:border-indigo-400 dark:hover:border-indigo-800 hover:shadow-xs active:scale-98 transition-all cursor-pointer"
+            >
               <div className="h-9 w-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-450 flex items-center justify-center shrink-0">
                 <Shield className="h-4.5 w-4.5" />
               </div>
@@ -960,9 +1060,12 @@ export default function CustomerDetailPage() {
                 <span className="block text-slate-400 font-bold uppercase text-[9px] tracking-wide">Activities</span>
                 <span className="font-semibold text-slate-855 dark:text-slate-200">{activities.length} Logs</span>
               </div>
-            </div>
+            </button>
 
-            <div className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3">
+            <button
+              onClick={() => scrollToSection('gifts-section')}
+              className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3 text-left w-full hover:border-indigo-400 dark:hover:border-indigo-800 hover:shadow-xs active:scale-98 transition-all cursor-pointer"
+            >
               <div className="h-9 w-9 rounded-xl bg-pink-50 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 flex items-center justify-center shrink-0">
                 <Gift className="h-4.5 w-4.5" />
               </div>
@@ -970,11 +1073,11 @@ export default function CustomerDetailPage() {
                 <span className="block text-slate-400 font-bold uppercase text-[9px] tracking-wide">Gifts Cost</span>
                 <span className="font-semibold text-slate-855 dark:text-slate-200">฿{totalGiftsCost.toLocaleString()}</span>
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Reminders List Section */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+          <div id="reminders-section" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 scroll-mt-6">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                 Reminders & Follow-Ups (งานที่ต้องติดตาม)
@@ -993,7 +1096,7 @@ export default function CustomerDetailPage() {
                 <p className="text-[11px] text-slate-500">No pending reminders for this customer.</p>
               </div>
             ) : (
-              <div className="space-y-2.5">
+              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
                 {pendingReminders.map((rem) => {
                   const isOverdue = rem.due_date < todayStr
                   return (
@@ -1073,7 +1176,7 @@ export default function CustomerDetailPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             
             {/* Activities Timeline Log */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+            <div id="activities-section" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 scroll-mt-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1">
                   <Shield className="h-4 w-4" /> Activity History ({activities.length})
@@ -1081,6 +1184,8 @@ export default function CustomerDetailPage() {
                 <button
                   onClick={() => {
                     setSelectedActivity(null)
+                    setDefaultActivityType(undefined)
+                    setDefaultActivitySummary(undefined)
                     setShowActivityForm(true)
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-650 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
@@ -1164,7 +1269,7 @@ export default function CustomerDetailPage() {
             </div>
 
             {/* Gifts Log */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+            <div id="gifts-section" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 scroll-mt-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1">
                   <Gift className="h-4 w-4" /> Gifts Tracker (฿{totalGiftsCost.toLocaleString()})
@@ -1283,9 +1388,13 @@ export default function CustomerDetailPage() {
         <ActivityForm
           customerId={id}
           activity={selectedActivity}
+          defaultType={defaultActivityType}
+          defaultSummary={defaultActivitySummary}
           onClose={() => {
             setShowActivityForm(false)
             setSelectedActivity(null)
+            setDefaultActivityType(undefined)
+            setDefaultActivitySummary(undefined)
           }}
           onSaved={loadAllData}
         />

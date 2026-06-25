@@ -28,41 +28,34 @@ export async function generateBirthdayReminders(supabase: any, customerId: strin
     nextBirthday = new Date(today.getFullYear() + 1, birthDate.getMonth(), birthDate.getDate())
   }
 
-  const offsets = [30] // Days before birthday (ยกเลิกแจ้งล่วงหน้า 1 วัน)
+  const offset = 30 // Days before birthday
+  const dueDateStr = formatDate(subDays(nextBirthday, offset))
 
-  // Compute all due dates we need to check upfront
-  const dueDates = offsets.map((offset) => formatDate(subDays(nextBirthday, offset)))
-
-  // Batch duplicate check: fetch all existing birthday reminders for this
-  // customer at once instead of one query per offset.
+  // Prevent duplicates: check if a pending/snoozed birthday reminder already exists
+  // for this exact upcoming birthday cycle (any status other than 'done').
   const { data: existing } = await supabase
     .from('reminders')
-    .select('due_date')
+    .select('id')
     .eq('customer_id', customerId)
     .eq('reminder_type', 'birthday')
-    .in('due_date', dueDates)
+    .eq('due_date', dueDateStr)
+    .neq('status', 'done')
+    .limit(1)
 
-  const existingDates = new Set((existing ?? []).map((r: any) => r.due_date))
+  if (existing && existing.length > 0) return false
 
-  let inserted = false
-  for (const offset of offsets) {
-    const dueDateStr = formatDate(subDays(nextBirthday, offset))
-    if (!existingDates.has(dueDateStr)) {
-      await supabase.from('reminders').insert({
-        owner_id: customer.owner_id,
-        customer_id: customerId,
-        reminder_type: 'birthday',
-        title: `วันเกิดคุณ ${customer.full_name} (ล่วงหน้า ${offset} วัน)`,
-        description: `วันเกิดคุณ ${customer.full_name} วันที่ ${customer.birth_date} (อายุครบรอบปีนี้)`,
-        due_date: dueDateStr,
-        reminder_offset_days: offset,
-        status: 'pending',
-        priority: offset === 1 ? 'high' : 'normal',
-      })
-      inserted = true
-    }
-  }
-  return inserted
+  await supabase.from('reminders').insert({
+    owner_id: customer.owner_id,
+    customer_id: customerId,
+    reminder_type: 'birthday',
+    title: `วันเกิดคุณ ${customer.full_name} (ล่วงหน้า ${offset} วัน)`,
+    description: `วันเกิดคุณ ${customer.full_name} วันที่ ${customer.birth_date} (อายุครบรอบปีนี้)`,
+    due_date: dueDateStr,
+    reminder_offset_days: offset,
+    status: 'pending',
+    priority: 'normal',
+  })
+  return true
 }
 
 /**
@@ -84,29 +77,29 @@ export async function generateFinancialReviewReminders(supabase: any, customerId
   const reviewDueDate = addMonths(baseDate, 6)
   const dueDateStr = formatDate(reviewDueDate)
 
-  // Avoid duplicate review reminders for the same target date
+  // Prevent duplicates: check for any existing financial_review reminder for this customer
+  // that is not yet done (regardless of exact due_date — only one review per customer at a time).
   const { data: existing } = await supabase
     .from('reminders')
     .select('id')
     .eq('customer_id', customerId)
     .eq('reminder_type', 'financial_review')
-    .eq('due_date', dueDateStr)
+    .neq('status', 'done')
     .limit(1)
 
-  if (!existing || existing.length === 0) {
-    await supabase.from('reminders').insert({
-      owner_id: customer.owner_id,
-      customer_id: customerId,
-      reminder_type: 'financial_review',
-      title: `รีวิวการเงินคุณ ${customer.full_name} (ครบรอบ 6 เดือน)`,
-      description: `ถึงกำหนดทบทวนแผนการเงินและกรมธรรม์ประจำรอบ 6 เดือนกับคุณ ${customer.full_name}`,
-      due_date: dueDateStr,
-      status: 'pending',
-      priority: 'normal',
-    })
-    return true
-  }
-  return false
+  if (existing && existing.length > 0) return false
+
+  await supabase.from('reminders').insert({
+    owner_id: customer.owner_id,
+    customer_id: customerId,
+    reminder_type: 'financial_review',
+    title: `รีวิวการเงินคุณ ${customer.full_name} (ครบรอบ 6 เดือน)`,
+    description: `ถึงกำหนดทบทวนแผนการเงินและกรมธรรม์ประจำรอบ 6 เดือนกับคุณ ${customer.full_name}`,
+    due_date: dueDateStr,
+    status: 'pending',
+    priority: 'normal',
+  })
+  return true
 }
 
 /**
@@ -125,44 +118,44 @@ export async function generatePremiumReminders(supabase: any, policyId: string):
   if (error || !policy || !policy.next_premium_due_date) return false
 
   const dueDate = parseISO(policy.next_premium_due_date)
-  const offsets = [30, 14, 7, 3] // Days before next premium due date (ยกเลิกแจ้งล่วงหน้า 1 วัน)
+  // Only create ONE reminder per policy cycle — the closest upcoming offset.
+  // Find the most urgent offset that is still in the future.
+  const today = new Date()
+  const offsets = [3, 7, 14, 30] // Check from most urgent to least urgent
+  const nextOffset = offsets.find(offset => subDays(dueDate, offset) >= today)
 
-  // Compute all due dates we need to check upfront
-  const dueDates = offsets.map((offset) => formatDate(subDays(dueDate, offset)))
+  // If dueDate itself is today or already past, no reminder needed (will be rolled over).
+  if (!nextOffset) return false
 
-  // Batch duplicate check: one query for all offsets instead of N queries.
+  const dueDateStr = formatDate(subDays(dueDate, nextOffset))
+
+  // Prevent duplicates: check for any non-done premium reminder for this exact policy cycle.
   const { data: existing } = await supabase
     .from('reminders')
-    .select('due_date')
+    .select('id')
     .eq('policy_id', policyId)
     .eq('reminder_type', 'premium_due')
-    .in('due_date', dueDates)
+    .neq('status', 'done')
+    .limit(1)
 
-  const existingDates = new Set((existing ?? []).map((r: any) => r.due_date))
+  if (existing && existing.length > 0) return false
 
   const companyLabel = policy.company === 'AXA' ? 'AXA' : policy.company === 'AIA' ? 'AIA' : 'OTHER'
   const clientName = policy.customers?.full_name || 'ลูกค้า'
 
-  let inserted = false
-  for (const offset of offsets) {
-    const dueDateStr = formatDate(subDays(dueDate, offset))
-    if (!existingDates.has(dueDateStr)) {
-      await supabase.from('reminders').insert({
-        owner_id: policy.owner_id,
-        customer_id: policy.customer_id,
-        policy_id: policyId,
-        reminder_type: 'premium_due',
-        title: `ชำระเบี้ย ${companyLabel} (${clientName}) - ล่วงหน้า ${offset} วัน`,
-        description: `ครบกำหนดชำระเบี้ยประกันแผน ${policy.plan_name || '—'} เลขกรมธรรม์ ${policy.policy_number} จำนวน ฿${policy.premium_amount?.toLocaleString() || '0'} ในวันที่ ${policy.next_premium_due_date}`,
-        due_date: dueDateStr,
-        reminder_offset_days: offset,
-        status: 'pending',
-        priority: offset <= 3 ? 'high' : 'normal',
-      })
-      inserted = true
-    }
-  }
-  return inserted
+  await supabase.from('reminders').insert({
+    owner_id: policy.owner_id,
+    customer_id: policy.customer_id,
+    policy_id: policyId,
+    reminder_type: 'premium_due',
+    title: `ชำระเบี้ย ${companyLabel} (${clientName}) - ล่วงหน้า ${nextOffset} วัน`,
+    description: `ครบกำหนดชำระเบี้ยประกันแผน ${policy.plan_name || '—'} เลขกรมธรรม์ ${policy.policy_number} จำนวน ฿${policy.premium_amount?.toLocaleString() || '0'} ในวันที่ ${policy.next_premium_due_date}`,
+    due_date: dueDateStr,
+    reminder_offset_days: nextOffset,
+    status: 'pending',
+    priority: nextOffset <= 7 ? 'high' : 'normal',
+  })
+  return true
 }
 
 /**
@@ -191,29 +184,22 @@ export async function scanAndGenerateAllReminders(supabase: any, ownerId: string
   const customers = customersResult.data ?? []
   const policies = policiesResult.data ?? []
 
-  // 1. Process customers for birthday & financial reviews
-  //    Use Promise.all to process all customers concurrently instead of sequentially.
-  if (customers.length > 0) {
-    const customerResults = await Promise.all(
-      customers.map(async (cust: any) => {
-        const results = await Promise.all([
-          cust.birth_date ? generateBirthdayReminders(supabase, cust.id) : Promise.resolve(false),
-          generateFinancialReviewReminders(supabase, cust.id),
-        ])
-        return results.some(Boolean)
-      })
-    )
-    if (customerResults.some(Boolean)) hasNewReminders = true
+  // 1. Process customers sequentially to avoid race-condition duplicates.
+  //    (concurrent inserts with the same duplicate-check logic can still cause dupes)
+  for (const cust of customers) {
+    if (cust.birth_date) {
+      const r = await generateBirthdayReminders(supabase, cust.id)
+      if (r) hasNewReminders = true
+    }
+    const r2 = await generateFinancialReviewReminders(supabase, cust.id)
+    if (r2) hasNewReminders = true
   }
 
-  // 2. Process policies for premium dues concurrently.
-  if (policies.length > 0) {
-    const policyResults = await Promise.all(
-      policies
-        .filter((pol: any) => pol.next_premium_due_date)
-        .map((pol: any) => generatePremiumReminders(supabase, pol.id))
-    )
-    if (policyResults.some(Boolean)) hasNewReminders = true
+  // 2. Process policies sequentially for the same reason.
+  for (const pol of policies) {
+    if (!pol.next_premium_due_date) continue
+    const r = await generatePremiumReminders(supabase, pol.id)
+    if (r) hasNewReminders = true
   }
 
   return hasNewReminders
