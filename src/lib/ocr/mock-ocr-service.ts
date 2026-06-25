@@ -59,7 +59,17 @@ export async function extractDataFromScreenshot(
     const birthDate = new Date(birthYear, birthMonth, birthDay)
     const birthDateString = birthDate.toISOString().split('T')[0]
 
-    const confidenceScore = parseFloat((Math.random() * 0.24 + 0.75).toFixed(2)) // 0.75 - 0.99
+    const confidenceScore = parseFloat((Math.random() * 0.25 + 0.70).toFixed(2)) // 0.70 - 0.95
+    let aiComment = null
+    if (confidenceScore < 0.85) {
+      const issues = [
+        'ชื่อลูกค้าภาษาไทยตัวอักษรบางส่วนถูกตัดขาดหรือเบลอ',
+        'ตัวเลขค่าเบี้ยประกันไม่ชัดเจน (สับสนระหว่าง 3 และ 8)',
+        'วันครบกำหนดชำระประกันตัวเลขจาง กรุณาตรวจสอบซ้ำ',
+        'เลขที่กรมธรรม์บางตัวอักษรจางหายไป'
+      ]
+      aiComment = getRandomItem(issues)
+    }
 
     results.push({
       detected_customer_name: customerName,
@@ -72,6 +82,7 @@ export async function extractDataFromScreenshot(
       detected_birth_date: birthDateString,
       confidence_score: confidenceScore,
       raw_ocr_text: `Screenshot line ${i + 1}: Name ${customerName} | Policy No ${policyNumber} | Plan ${planName} | Premium ${premiumAmount} THB | Due date ${dueDateString}`,
+      ai_comment: aiComment,
     })
   }
 

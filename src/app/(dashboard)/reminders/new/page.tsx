@@ -25,6 +25,7 @@ export default function NewReminderPage() {
   const [description, setDescription] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [priority, setPriority] = useState<'low' | 'normal' | 'high' | 'urgent'>('normal')
+  const [googleSyncEnabled, setGoogleSyncEnabled] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -74,13 +75,25 @@ export default function NewReminderPage() {
         due_date: dueDate,
         status: 'pending',
         priority,
+        google_sync_enabled: googleSyncEnabled,
       }
 
-      const { error: insertErr } = await supabase
+      const { data: newRem, error: insertErr } = await supabase
         .from('reminders')
         .insert(payload)
+        .select('id')
+        .single()
 
       if (insertErr) throw insertErr
+
+      if (newRem?.id && googleSyncEnabled) {
+        // Trigger calendar sync asynchronously
+        fetch('/api/calendar/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reminderId: newRem.id }),
+        }).catch((err) => console.error('Failed to trigger calendar sync:', err))
+      }
 
       router.push('/reminders')
       router.refresh()
@@ -221,6 +234,19 @@ export default function NewReminderPage() {
                 rows={3}
                 className="w-full p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:border-indigo-500 focus:outline-none"
               />
+            </div>
+
+            <div className="sm:col-span-2 flex items-center gap-2 pt-2 select-none">
+              <input
+                type="checkbox"
+                id="googleSyncEnabled"
+                checked={googleSyncEnabled}
+                onChange={(e) => setGoogleSyncEnabled(e.target.checked)}
+                className="h-4.5 w-4.5 rounded border-slate-200 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="googleSyncEnabled" className="text-xs font-semibold text-slate-750 dark:text-slate-350 cursor-pointer">
+                Sync to Google Calendar (บันทึกลงปฏิทิน Google อัตโนมัติ)
+              </label>
             </div>
 
           </div>

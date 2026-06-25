@@ -9,6 +9,7 @@ interface CustomerLevel {
   id: string
   name: string
   color: string | null
+  icon?: string | null
 }
 
 interface CustomerFormProps {
@@ -48,7 +49,7 @@ export default function CustomerForm({ customerId }: CustomerFormProps) {
         // 1. Fetch customer levels
         let { data: levelsData, error: levelsErr } = await supabase
           .from('customer_levels')
-          .select('id, name, color')
+          .select('id, name, color, icon')
           .order('name')
 
         if (levelsErr) throw levelsErr
@@ -56,9 +57,9 @@ export default function CustomerForm({ customerId }: CustomerFormProps) {
         // 2. If no levels exist, seed them automatically
         if (!levelsData || levelsData.length === 0) {
           const defaultLevels = [
-            { owner_id: user.id, name: 'VIP', color: '#EAB308', rule_type: 'manual' },
-            { owner_id: user.id, name: 'Standard', color: '#3B82F6', rule_type: 'manual' },
-            { owner_id: user.id, name: 'Watchlist', color: '#EF4444', rule_type: 'manual' }
+            { owner_id: user.id, name: 'VIP', color: '#EAB308', rule_type: 'manual', icon: 'Crown' },
+            { owner_id: user.id, name: 'Standard', color: '#3B82F6', rule_type: 'manual', icon: 'User' },
+            { owner_id: user.id, name: 'Watchlist', color: '#EF4444', rule_type: 'manual', icon: 'AlertTriangle' }
           ]
           const { data: seeded, error: seedErr } = await supabase
             .from('customer_levels')

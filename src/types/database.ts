@@ -28,6 +28,7 @@ export interface Database {
           name: string
           description: string | null
           color: string | null
+          icon: string | null
           rule_type: 'manual' | 'ai_suggested' | 'auto_detected' | null
           rule_config: Json | null
           created_at: string | null
@@ -41,6 +42,7 @@ export interface Database {
           name: string
           description?: string | null
           color?: string | null
+          icon?: string | null
           rule_type?: 'manual' | 'ai_suggested' | 'auto_detected' | null
           rule_config?: Json | null
           created_at?: string | null
@@ -54,6 +56,7 @@ export interface Database {
           name?: string
           description?: string | null
           color?: string | null
+          icon?: string | null
           rule_type?: 'manual' | 'ai_suggested' | 'auto_detected' | null
           rule_config?: Json | null
           created_at?: string | null

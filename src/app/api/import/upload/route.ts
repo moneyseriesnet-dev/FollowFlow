@@ -48,7 +48,20 @@ export async function POST(request: NextRequest) {
         })
 
       if (storageErr) {
-        // Fallback to mock image URL in case storage bucket is not provisioned in Supabase
+        console.warn('Supabase storage upload failed, saving file locally as fallback:', storageErr.message)
+        try {
+          const fs = await import('fs/promises')
+          const path = await import('path')
+          const localDir = path.join(process.cwd(), 'public', 'uploads', user.id, batch.id)
+          await fs.mkdir(localDir, { recursive: true })
+          
+          const fileBuffer = Buffer.from(await file.arrayBuffer())
+          const filePath = path.join(localDir, file.name)
+          await fs.writeFile(filePath, fileBuffer)
+        } catch (localWriteErr) {
+          console.error('Failed to write file locally:', localWriteErr)
+        }
+        
         const mockUrl = `/uploads/${user.id}/${batch.id}/${file.name}`
         imageUrls.push(mockUrl)
       } else {

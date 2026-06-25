@@ -26,7 +26,7 @@ export async function generateBirthdayReminders(supabase: any, customerId: strin
     nextBirthday = new Date(today.getFullYear() + 1, birthDate.getMonth(), birthDate.getDate())
   }
 
-  const offsets = [30, 1] // Days before birthday
+  const offsets = [30] // Days before birthday (ยกเลิกแจ้งล่วงหน้า 1 วัน)
 
   for (const offset of offsets) {
     const reminderDueDate = subDays(nextBirthday, offset)
@@ -39,9 +39,9 @@ export async function generateBirthdayReminders(supabase: any, customerId: strin
       .eq('customer_id', customerId)
       .eq('reminder_type', 'birthday')
       .eq('due_date', dueDateStr)
-      .maybeSingle()
+      .limit(1)
 
-    if (!existing) {
+    if (!existing || existing.length === 0) {
       await supabase.from('reminders').insert({
         owner_id: customer.owner_id,
         customer_id: customerId,
@@ -81,9 +81,9 @@ export async function generateFinancialReviewReminders(supabase: any, customerId
     .eq('customer_id', customerId)
     .eq('reminder_type', 'financial_review')
     .eq('due_date', dueDateStr)
-    .maybeSingle()
+    .limit(1)
 
-  if (!existing) {
+  if (!existing || existing.length === 0) {
     await supabase.from('reminders').insert({
       owner_id: customer.owner_id,
       customer_id: customerId,
@@ -111,7 +111,7 @@ export async function generatePremiumReminders(supabase: any, policyId: string) 
   if (error || !policy || !policy.next_premium_due_date) return
 
   const dueDate = parseISO(policy.next_premium_due_date)
-  const offsets = [30, 14, 7, 3, 1] // Days before next premium due date
+  const offsets = [30, 14, 7, 3] // Days before next premium due date (ยกเลิกแจ้งล่วงหน้า 1 วัน)
 
   for (const offset of offsets) {
     const reminderDueDate = subDays(dueDate, offset)
@@ -124,9 +124,9 @@ export async function generatePremiumReminders(supabase: any, policyId: string) 
       .eq('policy_id', policyId)
       .eq('reminder_type', 'premium_due')
       .eq('due_date', dueDateStr)
-      .maybeSingle()
+      .limit(1)
 
-    if (!existing) {
+    if (!existing || existing.length === 0) {
       const companyLabel = policy.company === 'AXA' ? 'AXA' : policy.company === 'AIA' ? 'AIA' : 'OTHER'
       const clientName = policy.customers?.full_name || 'ลูกค้า'
 
@@ -188,11 +188,13 @@ export async function scanAndGenerateAllReminders(supabase: any, ownerId: string
  * Shifty due dates forward according to payment frequency, and creates next cycle tasks.
  */
 export async function rolloverPolicyCycle(supabase: any, policyId: string, reminderId: string) {
-  // 1. Mark specific reminder as done
+  // 1. Mark all pending premium reminders for this policy as done to avoid leftovers
   await supabase
     .from('reminders')
     .update({ status: 'done', completed_at: new Date().toISOString() })
-    .eq('id', reminderId)
+    .eq('policy_id', policyId)
+    .eq('reminder_type', 'premium_due')
+    .eq('status', 'pending')
 
   // 2. Fetch policy details
   const { data: policy } = await supabase

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Camera,
@@ -37,6 +37,21 @@ export default function ImportPage() {
   const [error, setError] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Warn user before refreshing if in processing/review step
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (step === 'processing' || step === 'review' || step === 'importing') {
+        const message = 'หากคุณ Refresh หน้าเพจตอนนี้ ข้อมูล OCR ที่กำลังดำเนินการหรือกำลังตรวจสอบจะหายไปทั้งหมด'
+        e.returnValue = message
+        return message
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [step])
 
   // Handlers for Upload Step
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -353,9 +368,12 @@ export default function ImportPage() {
             </div>
           </div>
           <div className="space-y-2">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Analyzing screenshots...</h2>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Analyze screenshot</h2>
             <p className="text-sm text-slate-500 leading-relaxed">
-              We are utilizing AI OCR models to parse customer names, policy numbers, plans, premium schedules, and due dates from your files. This takes about a moment.
+              ระบบกำลังประมวลผลข้อมูลด้วย AI OCR เพื่อดึงชื่อลูกค้า เลขกรมธรรม์ แผนประกัน กำหนดชำระเบี้ย และวันครบกำหนดจากไฟล์ของคุณ ขั้นตอนนี้อาจใช้เวลาสักครู่
+            </p>
+            <p className="text-xs text-rose-500 dark:text-rose-400 font-semibold mt-2 animate-pulse">
+              ⚠️ ห้ามปิดหน้านี้หรือรีเฟรช (Refresh) หน้าเว็บในขณะที่ระบบกำลังประมวลผล
             </p>
           </div>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
@@ -405,6 +423,7 @@ export default function ImportPage() {
                     <th className="p-4">Premium (THB)</th>
                     <th className="p-4">Freq</th>
                     <th className="p-4">Due Date</th>
+                    <th className="p-4">AI Comment / ข้อสังเกต</th>
                     <th className="p-4">Conf.</th>
                     <th className="p-4">Status</th>
                     <th className="p-4 text-center">Actions</th>
@@ -412,7 +431,14 @@ export default function ImportPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {draftRows.map((row) => (
-                    <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/10">
+                    <tr
+                      key={row.id}
+                      className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/10 transition-colors ${
+                        row.ai_comment
+                          ? 'bg-amber-50/20 dark:bg-amber-950/10 border-l-2 border-l-amber-500'
+                          : ''
+                      }`}
+                    >
                       {row.isEditing ? (
                         <>
                           <td className="p-3">
@@ -467,6 +493,15 @@ export default function ImportPage() {
                               className="w-full p-2 border rounded-lg bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                             />
                           </td>
+                          <td className="p-3">
+                            <input
+                              type="text"
+                              value={row.ai_comment || ''}
+                              onChange={(e) => handleEditChange(row.id, 'ai_comment', e.target.value)}
+                              className="w-full p-2 border rounded-lg bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+                              placeholder="ข้อควรระวัง..."
+                            />
+                          </td>
                         </>
                       ) : (
                         <>
@@ -485,6 +520,16 @@ export default function ImportPage() {
                           </td>
                           <td className="p-4 font-semibold text-slate-700 dark:text-slate-300">
                             {row.detected_due_date}
+                          </td>
+                          <td className="p-4 max-w-[220px] truncate" title={row.ai_comment || ''}>
+                            {row.ai_comment ? (
+                              <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                                <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                                {row.ai_comment}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-600">-</span>
+                            )}
                           </td>
                         </>
                       )}
@@ -540,6 +585,33 @@ export default function ImportPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Dynamic AI Warnings Summary Card */}
+            {draftRows.some((row) => row.ai_comment) && (
+              <div className="bg-amber-50/40 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/30 rounded-2xl p-4 space-y-2 text-xs">
+                <div className="flex items-center gap-2 font-bold text-amber-800 dark:text-amber-300">
+                  <Sparkles className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span>สรุปข้อมูลที่ AI ตรวจพบความผิดปกติหรือต้องการการตรวจสอบเพิ่มเติม (AI Warnings Summary):</span>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-slate-700 dark:text-slate-300 ml-1">
+                  {draftRows
+                    .filter((row) => row.ai_comment)
+                    .map((row) => {
+                      const rowNum = draftRows.indexOf(row) + 1;
+                      return (
+                        <li key={row.id}>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">
+                            แถวที่ {rowNum} ({row.detected_customer_name || 'ไม่ทราบชื่อ'}):
+                          </span>{' '}
+                          <span className="text-amber-700 dark:text-amber-400">
+                            {row.ai_comment}
+                          </span>
+                        </li>
+                      );
+                    })}
+                </ul>
+              </div>
+            )}
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-4 border-t border-slate-100 dark:border-slate-800">
               <span className="text-xs text-slate-500 font-medium">

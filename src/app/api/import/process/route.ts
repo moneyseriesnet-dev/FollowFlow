@@ -44,11 +44,8 @@ export async function POST(request: NextRequest) {
 
     // 4. Process each image through OCR service
     for (const image of images) {
-      // Create a dummy File object since mock OCR service only needs it as interface compliance
-      const dummyFile = new File([], `screenshot_${image.id}.png`, { type: 'image/png' })
-      
       // Perform OCR extraction
-      const extractedRows = await ocrService.extractFromImage(dummyFile, sourceCompany)
+      const extractedRows = await ocrService.extractFromImage(image.imageUrl, sourceCompany)
 
       // Save draft rows to database
       const savedRows = await saveDraftRows(supabase, user.id, batchId, extractedRows, image.id)
@@ -78,6 +75,7 @@ export async function POST(request: NextRequest) {
         detected_due_date: row.detected_due_date,
         detected_birth_date: row.detected_birth_date,
         confidence_score: row.confidence_score ? Number(row.confidence_score) : null,
+        ai_comment: row.ai_comment || null,
         review_status: row.review_status,
         isEditing: false,
       })),

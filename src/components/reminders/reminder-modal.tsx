@@ -17,6 +17,7 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
   const [priority, setPriority] = useState(reminder.priority)
   const [nextActionDate, setNextActionDate] = useState(reminder.next_action_date || '')
   const [description, setDescription] = useState(reminder.description || '')
+  const [googleSyncEnabled, setGoogleSyncEnabled] = useState(reminder.google_sync_enabled !== false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSave = async () => {
@@ -29,6 +30,7 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
         priority,
         next_action_date: nextActionDate || null,
         description: description.trim() || null,
+        google_sync_enabled: googleSyncEnabled,
       }
 
       const { error: saveErr } = await supabase
@@ -37,6 +39,14 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
         .eq('id', reminder.id)
 
       if (saveErr) throw saveErr
+
+      // Trigger calendar sync asynchronously
+      fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: reminder.id }),
+      }).catch((err) => console.error('Failed to trigger calendar sync:', err))
+
       onSaved()
       onClose()
     } catch (err: any) {
@@ -135,6 +145,20 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
               className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none"
             />
           </div>
+
+          <div className="flex items-center gap-2 pt-1 select-none">
+            <input
+              type="checkbox"
+              id="googleSyncEnabledModal"
+              checked={googleSyncEnabled}
+              onChange={(e) => setGoogleSyncEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-200 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            <label htmlFor="googleSyncEnabledModal" className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide cursor-pointer">
+              Sync to Google Calendar (บันทึกลงปฏิทิน Google)
+            </label>
+          </div>
+
         </div>
 
         {/* Action buttons */}

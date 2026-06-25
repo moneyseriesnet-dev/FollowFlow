@@ -10,6 +10,42 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Custom slate scale */
+  --color-slate-150: #ebf1f6;
+  --color-slate-250: #d6e0ea;
+  --color-slate-350: #b2c1d3;
+  --color-slate-355: #abbccf;
+  --color-slate-450: #7c8ba1;
+  --color-slate-550: #56647a;
+  --color-slate-650: #3e4c5e;
+  --color-slate-655: #384555;
+  --color-slate-750: #293548;
+  --color-slate-850: #151e2e;
+  --color-slate-955: #080c14;
+
+  /* Custom indigo scale */
+  --color-indigo-150: #e0e7ff;
+  --color-indigo-650: #493fdb;
+  --color-indigo-750: #3c31b8;
+
+  /* Custom red scale */
+  --color-red-650: #dc2626;
+
+  /* Custom pink scale */
+  --color-pink-650: #db2777;
+  --color-pink-655: #db2777;
+  --color-pink-850: #9d174d;
+  --color-pink-955: #500724;
+
+  /* Custom rose scale */
+  --color-rose-150: #ffe4e6;
+  --color-rose-250: #fecdd3;
+  --color-rose-450: #f87171;
+
+  /* Custom emerald scale */
+  --color-emerald-150: #d1fae5;
+  --color-emerald-450: #34d399;
 }
 
 @media (prefers-color-scheme: dark) {

@@ -35,6 +35,9 @@ interface Reminder {
   priority: 'low' | 'normal' | 'high' | 'urgent'
   next_action_date: string | null
   completed_at: string | null
+  google_event_id?: string | null
+  google_sync_status?: 'unsynced' | 'synced' | 'failed' | null
+  google_sync_enabled?: boolean
   customers: {
     full_name: string
   } | null
@@ -106,6 +109,13 @@ export default function RemindersPage() {
       setIsScanning(true)
       try {
         await scanAndGenerateAllReminders(supabase, user.id)
+        
+        // Trigger batch sync after background scan finishes to auto-upload newly generated items
+        fetch('/api/calendar/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch: true }),
+        }).catch((err) => console.error('Failed to run background calendar batch sync:', err))
       } catch (err) {
         console.error(err)
       } finally {
@@ -128,6 +138,14 @@ export default function RemindersPage() {
           .update({ status: 'done', completed_at: new Date().toISOString() })
           .eq('id', reminder.id)
       }
+
+      // Trigger Google Calendar Sync
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: reminder.id }),
+      }).catch((err) => console.error('Failed to sync calendar on completion:', err))
+
       loadReminders()
     } catch (err) {
       console.error('Error completing reminder:', err)
@@ -151,6 +169,14 @@ export default function RemindersPage() {
           next_action_date: newDueDateStr,
         })
         .eq('id', reminder.id)
+
+      // Trigger Google Calendar Sync
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: reminder.id }),
+      }).catch((err) => console.error('Failed to sync calendar on snooze:', err))
+
       loadReminders()
     } catch (err) {
       console.error('Error snoozing reminder:', err)
@@ -166,6 +192,14 @@ export default function RemindersPage() {
         .from('reminders')
         .update({ status: 'cancelled' })
         .eq('id', reminder.id)
+
+      // Trigger Google Calendar Sync
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: reminder.id }),
+      }).catch((err) => console.error('Failed to sync calendar on cancel:', err))
+
       loadReminders()
     } catch (err) {
       console.error('Error cancelling reminder:', err)
@@ -319,8 +353,19 @@ export default function RemindersPage() {
                         {reminder.due_date}
                       </span>
                       {isOverdue && (
-                        <span className="text-[9px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-0.5">
+                        <span className="text-[9px] font-bold text-red-650 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-0.5">
                           <AlertTriangle className="h-2.5 w-2.5" /> OVERDUE
+                        </span>
+                      )}
+                      {reminder.google_sync_enabled && (
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-0.5 ${
+                          reminder.google_sync_status === 'synced'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-150 dark:bg-emerald-950/20 dark:text-emerald-450 dark:border-transparent'
+                            : reminder.google_sync_status === 'failed'
+                            ? 'bg-rose-50 text-rose-700 border-rose-150 dark:bg-rose-950/20 dark:text-rose-450 dark:border-transparent'
+                            : 'bg-slate-50 text-slate-650 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-transparent'
+                        }`}>
+                          {reminder.google_sync_status === 'synced' ? 'GCal Synced' : reminder.google_sync_status === 'failed' ? 'GCal Failed' : 'GCal Pending'}
                         </span>
                       )}
                     </div>

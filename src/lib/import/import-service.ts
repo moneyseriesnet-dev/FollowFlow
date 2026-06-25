@@ -71,6 +71,7 @@ export async function saveDraftRows(
     detected_due_date: row.detected_due_date,
     detected_birth_date: row.detected_birth_date,
     confidence_score: row.confidence_score,
+    ai_comment: row.ai_comment || null,
     review_status: 'pending' as const,
   }))
 
@@ -120,10 +121,10 @@ export async function approveAndImportRows(
       .select('id')
       .eq('owner_id', ownerId)
       .eq('full_name', normalizedName)
-      .maybeSingle()
+      .limit(1)
 
-    if (existingCustomer) {
-      customerId = existingCustomer.id
+    if (existingCustomer && existingCustomer.length > 0) {
+      customerId = existingCustomer[0].id
       customersMatched++
     } else {
       const { data: newCustomer, error: cErr } = await supabase
@@ -148,7 +149,7 @@ export async function approveAndImportRows(
       .select('id')
       .eq('owner_id', ownerId)
       .eq('policy_number', row.detected_policy_number)
-      .maybeSingle()
+      .limit(1)
 
     const policyPayload = {
       owner_id: ownerId,
@@ -163,11 +164,11 @@ export async function approveAndImportRows(
       policy_status: 'active' as const,
     }
 
-    if (existingPolicy) {
+    if (existingPolicy && existingPolicy.length > 0) {
       const { error: pErr } = await supabase
         .from('policies')
         .update(policyPayload)
-        .eq('id', existingPolicy.id)
+        .eq('id', existingPolicy[0].id)
 
       if (pErr) throw pErr
       policiesUpdated++

@@ -17,6 +17,7 @@ export interface OcrExtractedRow {
   detected_birth_date: string | null;
   confidence_score: number | null;
   raw_ocr_text: string | null;
+  ai_comment?: string | null;
 }
 
 /** The result of processing a single screenshot through OCR */
