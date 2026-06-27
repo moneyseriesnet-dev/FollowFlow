@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { generatePremiumReminders } from '@/lib/reminders/reminder-service'
 import { Loader2, ArrowLeft, Save } from 'lucide-react'
 
 interface CustomerLookup {
@@ -132,6 +133,15 @@ export default function PolicyForm({ policyId }: PolicyFormProps) {
           .eq('id', policyId)
 
         if (updateErr) throw updateErr
+
+        // Re-generate premium reminders (handles due_date changes) and sync to GCal
+        await generatePremiumReminders(supabase, policyId)
+        fetch('/api/calendar/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch: true }),
+        }).catch((err) => console.error('Failed to sync calendar after policy update:', err))
+
         router.push(`/policies/${policyId}`)
       } else {
         const { error: insertErr } = await supabase

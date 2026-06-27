@@ -1,4 +1,4 @@
-import { differenceInDays, addMonths, format, parseISO, addDays, subDays } from 'date-fns'
+import { differenceInDays, addMonths, format, parseISO, addDays, subDays, isBefore, startOfDay } from 'date-fns'
 
 // Helper to format date as YYYY-MM-DD
 const formatDate = (date: Date) => format(date, 'yyyy-MM-dd')
@@ -61,6 +61,8 @@ export async function generateBirthdayReminders(supabase: any, customerId: strin
 /**
  * Generate Financial Review Reminders.
  * Creates a review task scheduled for 6 months after the last contact/creation date.
+ * If the calculated review date is already in the past (e.g. from imported historical data),
+ * the reminder is scheduled 6 months from today instead — never in the past.
  *
  * @returns `true` if a new reminder was inserted, `false` otherwise.
  */
@@ -73,8 +75,16 @@ export async function generateFinancialReviewReminders(supabase: any, customerId
 
   if (error || !customer) return false
 
-  const baseDate = customer.created_at ? parseISO(customer.created_at) : new Date()
-  const reviewDueDate = addMonths(baseDate, 6)
+  const today = startOfDay(new Date())
+  const baseDate = customer.created_at ? parseISO(customer.created_at) : today
+  let reviewDueDate = addMonths(baseDate, 6)
+
+  // FUTURE-ONLY POLICY: If the review date falls in the past (e.g. from imported
+  // historical data), reschedule it to 6 months from today instead.
+  if (isBefore(reviewDueDate, today)) {
+    reviewDueDate = addMonths(today, 6)
+  }
+
   const dueDateStr = formatDate(reviewDueDate)
 
   // Prevent duplicates: check for any existing financial_review reminder for this customer
@@ -104,7 +114,10 @@ export async function generateFinancialReviewReminders(supabase: any, customerId
 
 /**
  * Generate Premium Due Reminders for a policy.
- * Generates reminders 30, 14, 7, 3 days before the due date for the active cycle.
+ * Generates ONE reminder at the most appropriate upcoming offset (30, 14, 7, or 3 days before due).
+ *
+ * FUTURE-ONLY POLICY: If next_premium_due_date is already past (e.g. imported historical data),
+ * no reminder is created. The cycle will be rolled over by the user completing the overdue task.
  *
  * @returns `true` if any new reminder was inserted, `false` otherwise.
  */
@@ -118,16 +131,26 @@ export async function generatePremiumReminders(supabase: any, policyId: string):
   if (error || !policy || !policy.next_premium_due_date) return false
 
   const dueDate = parseISO(policy.next_premium_due_date)
+  const today = startOfDay(new Date())
+
+  // FUTURE-ONLY POLICY: Skip entirely if the due date itself is in the past.
+  // This prevents creating "already overdue" reminders from imported historical data.
+  if (isBefore(dueDate, today)) return false
+
   // Only create ONE reminder per policy cycle — the closest upcoming offset.
-  // Find the most urgent offset that is still in the future.
-  const today = new Date()
+  // Find the most urgent offset where the reminder date is still today or in the future.
   const offsets = [3, 7, 14, 30] // Check from most urgent to least urgent
-  const nextOffset = offsets.find(offset => subDays(dueDate, offset) >= today)
+  const nextOffset = offsets.find(offset => !isBefore(subDays(dueDate, offset), today))
 
-  // If dueDate itself is today or already past, no reminder needed (will be rolled over).
-  if (!nextOffset) return false
+  // If all offsets are in the past (due very soon), skip — dueDate is still future but within 3 days.
+  // In that case use offset 3 (the smallest) so we still get a high-priority reminder.
+  const effectiveOffset = nextOffset ?? 3
 
-  const dueDateStr = formatDate(subDays(dueDate, nextOffset))
+  const reminderDate = subDays(dueDate, effectiveOffset)
+  // FUTURE-ONLY POLICY: The computed reminder date must not be in the past.
+  if (isBefore(reminderDate, today)) return false
+
+  const dueDateStr = formatDate(reminderDate)
 
   // Prevent duplicates: check for any non-done premium reminder for this exact policy cycle.
   const { data: existing } = await supabase
@@ -151,9 +174,9 @@ export async function generatePremiumReminders(supabase: any, policyId: string):
     title: `ชำระเบี้ย ${companyLabel} (${clientName})`,
     description: `ครบกำหนดชำระเบี้ยประกันแผน ${policy.plan_name || '—'} เลขกรมธรรม์ ${policy.policy_number} จำนวน ฿${policy.premium_amount?.toLocaleString() || '0'} ในวันที่ ${policy.next_premium_due_date}`,
     due_date: dueDateStr,
-    reminder_offset_days: nextOffset,
+    reminder_offset_days: effectiveOffset,
     status: 'pending',
-    priority: nextOffset <= 7 ? 'high' : 'normal',
+    priority: effectiveOffset <= 7 ? 'high' : 'normal',
   })
   return true
 }
