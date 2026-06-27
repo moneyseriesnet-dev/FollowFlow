@@ -161,8 +161,9 @@ export default function DashboardPage() {
               const dueDate = parseISO(policy.next_premium_due_date)
               const daysUntilDue = differenceInDays(dueDate, today)
 
-              // Only show if the due date is within 30 days (including overdue)
-              if (Math.abs(daysUntilDue) > 30) return
+              // Only filter out future reminders beyond 30 days.
+              // Overdue items (daysUntilDue < 0) always show regardless of how long ago.
+              if (daysUntilDue > 30) return
 
               let priorityRank = 6
               let priorityLabel = '🔵 Premium Due 30 Days'
@@ -222,8 +223,9 @@ export default function DashboardPage() {
               const due = parseISO(rem.due_date)
               const daysDiff = differenceInDays(due, today)
 
-              // Only show if the reminder is within 30 days (past or future)
-              if (Math.abs(daysDiff) > 30) return
+              // Only filter out future reminders beyond 30 days.
+              // Overdue items (daysDiff < 0) always show regardless of how long ago.
+              if (daysDiff > 30) return
               
               // Priority 1: Overdue pending reminders
               if (rem.due_date < todayStr) {
