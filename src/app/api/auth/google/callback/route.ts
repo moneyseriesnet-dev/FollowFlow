@@ -26,14 +26,15 @@ export async function GET(request: Request) {
     // Exchange auth code for tokens
     const tokens = await exchangeCodeForTokens(code, origin)
 
-    // Fetch existing credentials to preserve refresh_token if Google does not return a new one
+    // Fetch existing credentials to preserve refresh_token/google_email if Google does not return a new one
     const { data: existingCreds } = await supabase
       .from('google_credentials')
-      .select('refresh_token')
+      .select('refresh_token, google_email')
       .eq('owner_id', user.id)
       .maybeSingle()
 
     const refreshToken = tokens.refresh_token || existingCreds?.refresh_token
+    const googleEmail = tokens.email || existingCreds?.google_email
 
     if (!refreshToken) {
       throw new Error('No refresh token received from Google. Please disconnect this app in your Google Account Security settings and reconnect.')
@@ -47,6 +48,7 @@ export async function GET(request: Request) {
         refresh_token: refreshToken,
         expires_at: tokens.expires_at,
         calendar_id: 'primary',
+        google_email: googleEmail,
         updated_at: new Date().toISOString(),
       })
 

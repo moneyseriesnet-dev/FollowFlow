@@ -190,7 +190,7 @@ export default function CustomerLevelsSettingsPage() {
   ]
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 pb-24">
+    <div className="max-w-5xl mx-auto space-y-6 pb-24">
       {/* Back to settings navigation */}
       <button
         onClick={() => router.push('/settings')}

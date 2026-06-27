@@ -306,6 +306,7 @@ export type Database = {
           calendar_id: string
           created_at: string | null
           expires_at: string
+          google_email: string | null
           owner_id: string
           refresh_token: string
           updated_at: string | null
@@ -315,6 +316,7 @@ export type Database = {
           calendar_id?: string
           created_at?: string | null
           expires_at: string
+          google_email?: string | null
           owner_id: string
           refresh_token: string
           updated_at?: string | null
@@ -324,6 +326,7 @@ export type Database = {
           calendar_id?: string
           created_at?: string | null
           expires_at?: string
+          google_email?: string | null
           owner_id?: string
           refresh_token?: string
           updated_at?: string | null

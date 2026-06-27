@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Loader2, ArrowLeft, Save } from 'lucide-react'
 
@@ -12,6 +12,8 @@ interface CustomerLookup {
 
 export default function NewReminderPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const customerIdParam = searchParams.get('customerId') || ''
   const supabase = createClient() as any
 
   const [loading, setLoading] = useState(false)
@@ -39,7 +41,10 @@ export default function NewReminderPage() {
         if (error) throw error
         setCustomers(data || [])
         if (data && data.length > 0) {
-          setCustomerId(data[0].id)
+          const defaultId = customerIdParam && data.some((c: CustomerLookup) => c.id === customerIdParam)
+            ? customerIdParam
+            : data[0].id
+          setCustomerId(defaultId)
         }
       } catch (err: any) {
         console.error('Error fetching customers lookup:', err)
@@ -50,7 +55,7 @@ export default function NewReminderPage() {
     }
 
     loadCustomers()
-  }, [supabase])
+  }, [supabase, customerIdParam])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

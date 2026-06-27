@@ -60,6 +60,21 @@ function CalendarSyncSettingsContent() {
       if (data) {
         setConnected(true)
         setCredentials(data)
+
+        // Auto-heal: If google_email is missing, fetch and sync it from Google
+        if (!data.google_email) {
+          try {
+            const res = await fetch('/api/auth/google/sync-email', { method: 'POST' })
+            if (res.ok) {
+              const syncData = await res.json()
+              if (syncData.email) {
+                setCredentials((prev: any) => ({ ...prev, google_email: syncData.email }))
+              }
+            }
+          } catch (e) {
+            console.error('Failed to auto-sync Google email:', e)
+          }
+        }
       } else {
         setConnected(false)
         setCredentials(null)
@@ -148,7 +163,7 @@ function CalendarSyncSettingsContent() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 pb-24">
+    <div className="max-w-5xl mx-auto space-y-6 pb-24">
       {/* Navigation */}
       <button
         onClick={() => router.push('/settings')}
@@ -184,7 +199,7 @@ function CalendarSyncSettingsContent() {
           <div className="space-y-1">
             <p className="font-bold">Connection Successful!</p>
             <p className="font-medium opacity-90 leading-relaxed">
-              Your Google account is now securely linked. Reminders will sync automatically.
+              Your Google account {credentials?.google_email ? `(${credentials.google_email}) ` : ''}is now securely linked. Reminders will sync automatically.
             </p>
           </div>
         </div>
@@ -222,6 +237,11 @@ function CalendarSyncSettingsContent() {
                     Active
                   </span>
                 </div>
+                {credentials?.google_email && (
+                  <p className="text-xs text-slate-600 dark:text-slate-350">
+                    Connected account: <span className="font-bold text-slate-800 dark:text-slate-100">{credentials.google_email}</span>
+                  </p>
+                )}
                 <p className="text-xs text-slate-500">
                   Default calendar: <span className="font-mono bg-slate-50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">{credentials?.calendar_id || 'primary'}</span>
                 </p>

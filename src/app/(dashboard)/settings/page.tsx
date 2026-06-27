@@ -105,7 +105,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-6 pb-24">
+    <div className="max-w-5xl mx-auto space-y-6 pb-24">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-xl font-bold text-slate-900 dark:text-white leading-none">Settings</h1>

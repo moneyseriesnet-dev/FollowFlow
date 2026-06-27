@@ -71,7 +71,7 @@ export default function GiftsPage() {
       // Fetch all activities
       const { data: actsData } = await supabase
         .from('activities')
-        .select('id, policy_id')
+        .select('id, policy_id, activity_type, activity_date, summary')
 
       setGifts(giftsData || [])
       setCustomers(custsData || [])
@@ -250,6 +250,75 @@ export default function GiftsPage() {
     { name: 'Unlinked / General', cost: companyCosts.SHARED_OR_UNKNOWN, color: 'bg-slate-500' }
   ].filter((c) => c.cost > 0)
 
+  // 4. By Activity Type
+  const activityTypeNames: { [key: string]: string } = {
+    phone_call: 'Phone Call (โทรศัพท์)',
+    line_chat: 'Line Chat (ไลน์คุย)',
+    meeting: 'Meeting (พบปะ)',
+    email: 'Email (อีเมล)',
+    policy_delivery: 'Policy Delivery (ส่งมอบกรมธรรม์)',
+    claim_support: 'Claim Support (ช่วยเหลือเคลม)',
+    follow_up: 'Follow Up (ติดตามงาน)',
+    other: 'Other (อื่นๆ)'
+  }
+
+  const activityTypeCosts: { [key: string]: { cost: number; count: number } } = {
+    phone_call: { cost: 0, count: 0 },
+    line_chat: { cost: 0, count: 0 },
+    meeting: { cost: 0, count: 0 },
+    email: { cost: 0, count: 0 },
+    policy_delivery: { cost: 0, count: 0 },
+    claim_support: { cost: 0, count: 0 },
+    follow_up: { cost: 0, count: 0 },
+    other: { cost: 0, count: 0 }
+  }
+
+  let unlinkedCost = 0
+  let unlinkedCount = 0
+
+  gifts.forEach((g) => {
+    const cost = Number(g.gift_cost) || 0
+    if (g.activity_id) {
+      const act = activities.find((a) => a.id === g.activity_id)
+      if (act && act.activity_type && activityTypeCosts[act.activity_type]) {
+        activityTypeCosts[act.activity_type].cost += cost
+        activityTypeCosts[act.activity_type].count += 1
+      } else {
+        unlinkedCost += cost
+        unlinkedCount += 1
+      }
+    } else {
+      unlinkedCost += cost
+      unlinkedCount += 1
+    }
+  })
+
+  const activityBreakdown = Object.entries(activityTypeCosts)
+    .map(([type, data]) => ({
+      id: type,
+      name: activityTypeNames[type] || type,
+      totalCost: data.cost,
+      count: data.count,
+      color: type === 'meeting' ? 'bg-emerald-600' :
+             type === 'policy_delivery' ? 'bg-indigo-650' :
+             type === 'follow_up' ? 'bg-sky-500' :
+             type === 'phone_call' ? 'bg-blue-600' :
+             type === 'line_chat' ? 'bg-teal-500' :
+             type === 'claim_support' ? 'bg-rose-500' : 'bg-slate-550'
+    }))
+    .filter((a) => a.totalCost > 0)
+    .sort((a, b) => b.totalCost - a.totalCost)
+
+  if (unlinkedCost > 0) {
+    activityBreakdown.push({
+      id: 'unlinked',
+      name: 'Direct Gift / General (ให้ของขวัญโดยตรง)',
+      totalCost: unlinkedCost,
+      count: unlinkedCount,
+      color: 'bg-slate-400'
+    })
+  }
+
   // Filter logs list based on search
   const filteredGifts = gifts.filter((g) => {
     const cust = customers.find((c) => c.id === g.customer_id)
@@ -280,7 +349,7 @@ export default function GiftsPage() {
   })
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-24">
+    <div className="max-w-5xl mx-auto space-y-6 pb-24">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -396,7 +465,7 @@ export default function GiftsPage() {
               placeholder="Search gifts by customer name, gift name, or note..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-11 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs focus:border-indigo-500 focus:outline-none transition-all shadow-sm"
+              className="w-full h-11 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none transition-all shadow-sm"
             />
           </div>
 
@@ -717,6 +786,39 @@ export default function GiftsPage() {
             )}
           </div>
 
+          {/* Breakdown by Activity Type */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 md:col-span-2">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <GiftIcon className="h-4.5 w-4.5 text-pink-500" /> Breakdown by Activity Type (ยอดจำแนกตามกิจกรรมการบริการลูกค้า)
+            </h3>
+
+            {activityBreakdown.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-6">No data available.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                {activityBreakdown.map((item) => {
+                  const percent = totalCostYear > 0 ? (item.totalCost / totalCostYear) * 100 : 0
+                  return (
+                    <div key={item.id} className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between font-semibold">
+                        <span className="text-slate-750 dark:text-slate-350">{item.name}</span>
+                        <span className="font-bold text-slate-900 dark:text-white">
+                          ฿{item.totalCost.toLocaleString()} ({Math.round(percent)}%)
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${item.color}`}
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Top Customers Breakdown */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 md:col-span-2">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -793,7 +895,7 @@ export default function GiftsPage() {
                   placeholder="ค้นหาชื่อลูกค้า..."
                   value={customerSearchQuery}
                   onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                  className="w-full h-10 pl-9 pr-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950 focus:border-indigo-500 focus:outline-none text-xs"
+                  className="w-full h-10 pl-9 pr-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-955 focus:border-indigo-500 focus:outline-none text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
                 />
               </div>
 

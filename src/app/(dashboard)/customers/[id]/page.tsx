@@ -134,6 +134,7 @@ export default function CustomerDetailPage() {
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reminderTab, setReminderTab] = useState<'pending' | 'completed'>('pending')
+  const [showLevelDropdown, setShowLevelDropdown] = useState(false)
 
   // AI states
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -149,6 +150,11 @@ export default function CustomerDetailPage() {
 
   // Modals / forms state
   const [showActivityForm, setShowActivityForm] = useState(false)
+  const [hideGiftOptionInForm, setHideGiftOptionInForm] = useState(false)
+  const [aiActiveTab, setAiActiveTab] = useState<'overview' | 'chat'>('overview')
+  const [chatMessage, setChatMessage] = useState('')
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model'; text: string }[]>([])
+  const [isSendingChat, setIsSendingChat] = useState(false)
   const [selectedActivity, setSelectedActivity] = useState<any>(null)
   const [showActivityDropdown, setShowActivityDropdown] = useState(false)
   const [defaultActivityType, setDefaultActivityType] = useState<string | undefined>(undefined)
@@ -476,6 +482,40 @@ export default function CustomerDetailPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleSendChatMessage = async (customMessage?: string) => {
+    const textToSend = customMessage || chatMessage
+    if (!textToSend.trim() || isSendingChat) return
+
+    const userMessage = { role: 'user' as const, text: textToSend }
+    setChatHistory(prev => [...prev, userMessage])
+    if (!customMessage) {
+      setChatMessage('')
+    }
+    setIsSendingChat(true)
+
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: id,
+          message: textToSend,
+          history: chatHistory
+        })
+      })
+      const data = await res.json()
+      if (data.error) {
+        setChatHistory(prev => [...prev, { role: 'model', text: `เกิดข้อผิดพลาด: ${data.error}` }])
+      } else {
+        setChatHistory(prev => [...prev, { role: 'model', text: data.reply }])
+      }
+    } catch (err: any) {
+      setChatHistory(prev => [...prev, { role: 'model', text: 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์' }])
+    } finally {
+      setIsSendingChat(false)
+    }
+  }
+
   const getActivityIcon = (type: string) => {
     switch (type) {
       case 'phone_call':
@@ -694,7 +734,7 @@ export default function CustomerDetailPage() {
   const totalGiftsCost = gifts.reduce((acc, curr) => acc + (Number(curr.gift_cost) || 0), 0)
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-24">
+    <div className="max-w-7xl mx-auto space-y-6 pb-24">
       {/* Header Back Link */}
       <div className="flex items-center justify-between">
         <button
@@ -758,90 +798,90 @@ export default function CustomerDetailPage() {
               <h1 className="text-xl font-bold text-slate-900 dark:text-white leading-none">
                 {customer.full_name}
               </h1>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="relative">
                 <button
-                  onClick={() => setShowActivityDropdown(!showActivityDropdown)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-655 dark:text-indigo-400 hover:bg-indigo-100/80 dark:hover:bg-indigo-900/50 border border-indigo-150/50 dark:border-indigo-900/40 transition-all active:scale-95 shadow-sm cursor-pointer"
-                  title="Add Activity"
+                  onClick={() => setShowLevelDropdown(!showLevelDropdown)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase cursor-pointer hover:opacity-80 transition-opacity active:scale-95"
+                  style={{
+                    backgroundColor: level?.color ? `${level.color}15` : '#6B728015',
+                    color: level?.color || '#6B7280',
+                    borderColor: level?.color ? `${level.color}30` : '#6B728030',
+                  }}
+                  title="Click to change customer level"
                 >
-                  <Plus className="h-3.5 w-3.5" />
+                  {(() => {
+                    if (!level) return null
+                    const IconComponent = AVAILABLE_ICONS[level.icon as keyof typeof AVAILABLE_ICONS]
+                    return IconComponent ? <IconComponent className="h-3 w-3" /> : null
+                  })()}
+                  {level?.name || 'No Level'}
+                  <svg className="h-2.5 w-2.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                 </button>
-                {showActivityDropdown && (
+
+                {showLevelDropdown && (
                   <>
-                    <div 
-                      className="fixed inset-0 z-10" 
-                      onClick={() => setShowActivityDropdown(false)}
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setShowLevelDropdown(false)}
                     />
-                    <div className="absolute left-0 mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 p-2 shadow-xl border border-slate-200 dark:border-slate-800 z-20 text-xs text-slate-700 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-200">
-                      <div className="px-3 py-2 font-bold text-slate-400 dark:text-slate-500 text-[10px] uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/60 pb-1 mb-1">
-                        Quick Add Activity (บันทึกกิจกรรมด่วน)
-                      </div>
-                      <button
-                        onClick={() => {
-                          setDefaultActivityType('meeting')
-                          setDefaultActivitySummary('ออกไปให้ของขวัญ')
-                          setShowActivityForm(true)
-                          setShowActivityDropdown(false)
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
-                      >
-                        <span className="text-base shrink-0">🎁</span>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">ออกไปให้ของขวัญ</div>
-                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log meeting to deliver a gift</div>
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setDefaultActivityType('meeting')
-                          setDefaultActivitySummary('เยี่ยมลูกค้า')
-                          setShowActivityForm(true)
-                          setShowActivityDropdown(false)
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
-                      >
-                        <span className="text-base shrink-0">👥</span>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">เยี่ยมลูกค้า</div>
-                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log client visit meeting</div>
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setDefaultActivityType('meeting')
-                          setDefaultActivitySummary('นัดวางแผนการเงินอัปเดต')
-                          setShowActivityForm(true)
-                          setShowActivityDropdown(false)
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
-                      >
-                        <span className="text-base shrink-0">📅</span>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">นัดวางแผน (อัปเดต)</div>
-                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log planning update meeting</div>
-                        </div>
-                      </button>
+                    <div className="absolute left-0 top-full mt-1.5 w-52 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl z-20 p-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                      <p className="px-3 py-1.5 text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                        เปลี่ยนระดับลูกค้า
+                      </p>
+                      {levelsList.map((lvl) => {
+                        const LvlIcon = AVAILABLE_ICONS[lvl.icon as keyof typeof AVAILABLE_ICONS]
+                        const isActive = lvl.id === customer.customer_level_id
+                        return (
+                          <button
+                            key={lvl.id}
+                            onClick={async () => {
+                              setShowLevelDropdown(false)
+                              if (isActive) return
+                              setIsUpdatingLevel(true)
+                              try {
+                                const { error: updateErr } = await supabase
+                                  .from('customers')
+                                  .update({ customer_level_id: lvl.id })
+                                  .eq('id', id)
+                                if (updateErr) throw updateErr
+                                await loadAllData()
+                              } catch (err: any) {
+                                alert(err.message || 'Failed to update level')
+                              } finally {
+                                setIsUpdatingLevel(false)
+                              }
+                            }}
+                            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                              isActive
+                                ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            <span
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px]"
+                              style={{
+                                backgroundColor: lvl.color ? `${lvl.color}20` : '#6B728020',
+                                color: lvl.color || '#6B7280',
+                              }}
+                            >
+                              {LvlIcon ? <LvlIcon className="h-3 w-3" /> : null}
+                            </span>
+                            <span>{lvl.name}</span>
+                            {isActive && (
+                              <svg className="ml-auto h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                            )}
+                          </button>
+                        )
+                      })}
+                      {levelsList.length === 0 && (
+                        <p className="px-3 py-3 text-[11px] text-slate-400 text-center">ยังไม่มีระดับที่ตั้งค่าไว้</p>
+                      )}
                     </div>
                   </>
                 )}
               </div>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span
-                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase"
-                style={{
-                  backgroundColor: level?.color ? `${level.color}15` : '#6B728015',
-                  color: level?.color || '#6B7280',
-                  borderColor: level?.color ? `${level.color}30` : '#6B728030',
-                }}
-              >
-                {(() => {
-                  if (!level) return null
-                  const IconComponent = AVAILABLE_ICONS[level.icon as keyof typeof AVAILABLE_ICONS]
-                  return IconComponent ? <IconComponent className="h-3 w-3" /> : null
-                })()}
-                {level?.name || 'No Level'}
-              </span>
               <span
                 className={`px-2.5 py-0.5 border rounded-full text-[10px] font-bold border uppercase ${
                   customer.status === 'active'
@@ -857,44 +897,120 @@ export default function CustomerDetailPage() {
           </div>
         </div>
 
-        {/* Quick Dial Contact Targets */}
-        <div className="flex gap-2">
-          {customer.phone && (
-            <a
-              href={`tel:${customer.phone}`}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:bg-indigo-50 hover:text-indigo-650 transition-colors"
-              title="Call Phone"
+                {/* Actions & Contacts */}
+        <div className="flex flex-wrap items-center gap-3 self-start md:self-auto shrink-0">
+          <div className="relative">
+            <button
+              onClick={() => setShowActivityDropdown(!showActivityDropdown)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all active:scale-98 cursor-pointer"
             >
-              <Phone className="h-5 w-5" />
-            </a>
-          )}
-          {customer.email && (
-            <a
-              href={`mailto:${customer.email}`}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:bg-indigo-50 hover:text-indigo-650 transition-colors"
-              title="Email Customer"
-            >
-              <Mail className="h-5 w-5" />
-            </a>
-          )}
-          {customer.line_id && (
-            <a
-              href={`https://line.me/ti/p/~${customer.line_id}`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:bg-indigo-50 hover:text-indigo-655 transition-colors"
-              title="Line Chat"
-            >
-              <MessageCircle className="h-5 w-5" />
-            </a>
-          )}
+              <Plus className="h-4 w-4" />
+              <span>บันทึกกิจกรรม (Log Activity)</span>
+            </button>
+            {showActivityDropdown && (
+              <>
+                <div 
+                  className="fixed inset-0 z-10" 
+                  onClick={() => setShowActivityDropdown(false)}
+                />
+                <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 p-2 shadow-xl border border-slate-200 dark:border-slate-800 z-20 text-xs text-slate-700 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="px-3 py-2 font-bold text-slate-400 dark:text-slate-500 text-[10px] uppercase tracking-wider border-b border-slate-100 dark:border-slate-800/60 pb-1 mb-1">
+                    Quick Add Activity (บันทึกกิจกรรมด่วน)
+                  </div>
+                  <button
+                    onClick={() => {
+                      setDefaultActivityType('meeting')
+                      setDefaultActivitySummary('เยี่ยมลูกค้า')
+                      setHideGiftOptionInForm(true)
+                      setShowActivityForm(true)
+                      setShowActivityDropdown(false)
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-850 flex items-center gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <span className="text-base shrink-0">👥</span>
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-white">เยี่ยมลูกค้า</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500">Log client visit meeting</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDefaultActivityType('meeting')
+                      setDefaultActivitySummary('นัดวางแผนการเงินอัปเดต')
+                      setHideGiftOptionInForm(true)
+                      setShowActivityForm(true)
+                      setShowActivityDropdown(false)
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <span className="text-base shrink-0">📅</span>
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-white">นัดวางแผน (อัปเดต)</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500">Log planning update meeting</div>
+                    </div>
+                  </button>
+                  <div className="border-t border-slate-100 dark:border-slate-800/60 my-1 pt-1" />
+                  <button
+                    onClick={() => {
+                      setSelectedActivity(null)
+                      setDefaultActivityType(undefined)
+                      setDefaultActivitySummary(undefined)
+                      setHideGiftOptionInForm(false)
+                      setShowActivityForm(true)
+                      setShowActivityDropdown(false)
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer text-indigo-650 dark:text-indigo-400 transition-colors font-semibold"
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-white">บันทึกกิจกรรมทั่วไป...</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500">Open full activity logger</div>
+                    </div>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Quick Dial Contact Targets */}
+          <div className="flex gap-2">
+            {customer.phone && (
+              <a
+                href={`tel:${customer.phone}`}
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:bg-indigo-50 hover:text-indigo-650 transition-colors"
+                title="Call Phone"
+              >
+                <Phone className="h-5 w-5" />
+              </a>
+            )}
+            {customer.email && (
+              <a
+                href={`mailto:${customer.email}`}
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:bg-indigo-50 hover:text-indigo-655 transition-colors"
+                title="Email Customer"
+              >
+                <Mail className="h-5 w-5" />
+              </a>
+            )}
+            {customer.line_id && (
+              <a
+                href={`https://line.me/ti/p/~${customer.line_id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 hover:bg-indigo-50 hover:text-indigo-655 transition-colors"
+                title="Line Chat"
+              >
+                <MessageCircle className="h-5 w-5" />
+              </a>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Grid of Profile Details & Personal Notes */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left Column */}
-        <div className="md:col-span-1 space-y-6">
+            {/* Grid of Profile Details & Personal Notes */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+        {/* Column 1 (Left): Contact Info & Policies */}
+        <div className="col-span-12 md:col-span-3 space-y-6">
           {/* Profile Card */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
             <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
@@ -943,204 +1059,6 @@ export default function CustomerDetailPage() {
               </div>
             </div>
           </div>
-
-          {/* AI Relationship Assistant */}
-          <div className="bg-gradient-to-br from-indigo-500/[0.03] to-purple-500/[0.03] dark:from-indigo-950/10 dark:to-purple-950/10 border border-indigo-150/80 dark:border-indigo-900/30 rounded-3xl p-6 shadow-sm space-y-5">
-            <div className="flex flex-col gap-3 justify-between">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-655 dark:text-indigo-400">
-                  <Sparkles className="h-5 w-5 drop-shadow-[0_0_4px_rgba(99,102,241,0.4)]" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
-                    AI Relationship Assistant
-                  </h3>
-                  <p className="text-[10px] text-slate-400 font-medium">
-                    ผู้ช่วยวิเคราะห์ข้อมูลและความสัมพันธ์ลูกค้า
-                  </p>
-                </div>
-              </div>
-              
-              {!customer.ai_last_generated_at && (
-                <button
-                  onClick={handleGenerateAI}
-                  disabled={isAnalyzing}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      <span>กำลังวิเคราะห์...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-3.5 w-3.5" />
-                      <span>เริ่มวิเคราะห์ด้วย AI</span>
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
-
-            {!customer.ai_last_generated_at ? (
-              <div className="text-center py-6 px-4 bg-white/50 dark:bg-slate-900/40 rounded-2xl border border-dashed border-indigo-100 dark:border-indigo-900/20 space-y-3">
-                <Sparkles className="h-8 w-8 text-indigo-400/80 mx-auto animate-pulse" />
-                <div className="space-y-1">
-                  <h4 className="text-xs font-bold text-slate-880 dark:text-slate-200">ยังไม่ได้เปิดใช้งานการวิเคราะห์ข้อมูลความสัมพันธ์</h4>
-                  <p className="text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
-                    ใช้ AI ประเมินประวัติ ความต้องการความคุ้มครอง และความเสี่ยงในการจ่ายเบี้ย เพื่อรับคำแนะนำระดับ สรุปพฤติกรรม และร่างข้อความสำหรับติดตามลูกค้าทันที
-                  </p>
-                </div>
-                <button
-                  onClick={handleGenerateAI}
-                  disabled={isAnalyzing}
-                  className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/30 text-indigo-650 dark:text-indigo-400 text-xs font-bold rounded-xl transition-colors shadow-sm inline-flex items-center gap-1.5 w-full justify-center"
-                >
-                  <Sparkles className="h-3.5 w-3.5" /> เริ่มวิเคราะห์ลูกค้ารายนี้
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* 1. Relationship Summary */}
-                <div className="space-y-1.5">
-                  <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                    สรุปผลการวิเคราะห์ความคุ้มครองและความสัมพันธ์
-                  </h4>
-                  <div className="p-4 bg-white dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 rounded-2xl text-xs text-slate-700 dark:text-slate-350 leading-relaxed shadow-sm">
-                    {customer.ai_summary}
-                  </div>
-                </div>
-
-                {/* 2. Level Recommendation Banner */}
-                {customer.ai_suggested_level_id && (
-                  <div className="space-y-1.5">
-                    <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                      ระดับที่แนะนำ
-                    </h4>
-                    
-                    {customer.ai_suggested_level_id !== customer.customer_level_id ? (
-                      <div className="p-4 bg-amber-500/5 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-900/20 rounded-2xl flex flex-col justify-between gap-3 shadow-sm">
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-bold text-amber-800 dark:text-amber-400">
-                              แนะนำให้อัปเดตระดับเป็น:
-                            </span>
-                            <span
-                              className="px-2 py-0.5 rounded-full text-[10px] font-extrabold border uppercase bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800"
-                              style={{
-                                color: levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color || undefined,
-                                borderColor: levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color ? `${levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color}40` : undefined,
-                                backgroundColor: levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color ? `${levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color}10` : undefined,
-                              }}
-                            >
-                              {levelsList.find(l => l.id === customer.ai_suggested_level_id)?.name || 'Unknown'}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-505 dark:text-slate-455 leading-relaxed font-medium">
-                            {customer.ai_suggested_level_reason}
-                          </p>
-                        </div>
-                        
-                        <button
-                          onClick={handleApplySuggestedLevel}
-                          disabled={isUpdatingLevel}
-                          className="w-full py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-extrabold shadow-sm flex items-center justify-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
-                        >
-                          {isUpdatingLevel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
-                          ปรับใช้ระดับนี้
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="p-3.5 bg-emerald-500/5 dark:bg-emerald-950/10 border border-emerald-100/50 dark:border-emerald-900/20 rounded-2xl flex items-center gap-2 shadow-sm">
-                        <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-455 shrink-0" />
-                        <p className="text-[11px] text-emerald-800 dark:text-emerald-400 font-medium">
-                          ระดับปัจจุบันตรงตามคำแนะนำของ AI แล้ว ({levelsList.find(l => l.id === customer.customer_level_id)?.name})
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 3. Special Attention Required Badge */}
-                {customer.needs_special_follow_up && (
-                  <div className="p-3.5 bg-red-500/5 dark:bg-red-950/15 border border-red-200/50 dark:border-red-900/30 rounded-2xl flex items-center gap-2 shadow-sm">
-                    <AlertTriangle className="h-4 w-4 text-red-655 dark:text-red-400 shrink-0" />
-                    <p className="text-[11px] text-red-800 dark:text-red-400 font-bold">
-                      ต้องได้รับการดูแลชำระเบี้ยพิเศษ: ตรวจพบประวัติเลื่อนจ่ายหรือเบี้ยค้างชำระกรุณาติดตามความสัมพันธ์ด่วน
-                    </p>
-                  </div>
-                )}
-
-                {/* 4. Suggested Next Actions Checklist */}
-                {customer.ai_suggested_actions?.recommendedActions && customer.ai_suggested_actions.recommendedActions.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                      แผนการดูแลและแนวทางการดำเนินการถัดไป (Next Actions)
-                    </h4>
-                    <div className="space-y-2">
-                      {customer.ai_suggested_actions.recommendedActions.map((action: string, idx: number) => (
-                        <div key={idx} className="flex items-start gap-2.5 p-3 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-xs">
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950 text-indigo-650 dark:text-indigo-400 text-[10px] font-bold">
-                            {idx + 1}
-                          </span>
-                          <span className="text-xs text-slate-700 dark:text-slate-355 leading-normal font-medium">
-                            {action}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* 5. Copyable Greeting Message Draft */}
-                {customer.ai_suggested_actions?.draftMessage && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                        ร่างข้อความสำหรับส่งติดต่อลูกค้า (LINE/SMS)
-                      </h4>
-                      <button
-                        onClick={() => handleCopyMessage(customer.ai_suggested_actions?.draftMessage || '')}
-                        className="flex items-center gap-1 text-[10px] font-bold text-indigo-655 hover:text-indigo-500"
-                      >
-                        {copied ? (
-                          <span className="text-emerald-600 dark:text-emerald-400">คัดลอกสำเร็จ!</span>
-                        ) : (
-                          <>
-                            <Copy className="h-3 w-3" />
-                            <span>คัดลอกข้อความ</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    <div className="relative group">
-                      <textarea
-                        readOnly
-                        value={customer.ai_suggested_actions.draftMessage}
-                        rows={3}
-                        className="w-full p-4 rounded-2xl border border-slate-150 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950 text-xs text-slate-750 dark:text-slate-300 leading-relaxed focus:outline-none resize-none cursor-text font-medium"
-                      />
-                      <span className="absolute bottom-2.5 right-3 text-[9px] text-slate-400 dark:text-slate-500 pointer-events-none select-none">
-                        สำหรับใช้เตือนหรือทักทายภายใน
-                      </span>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Last generated timestamp */}
-                {customer.ai_last_generated_at && (
-                  <div className="text-[10px] text-slate-400 dark:text-slate-500 text-right font-medium">
-                    วิเคราะห์เมื่อ: {new Date(customer.ai_last_generated_at).toLocaleString('th-TH')}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="md:col-span-2 space-y-6">
           {/* Policies Section */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
@@ -1161,7 +1079,7 @@ export default function CustomerDetailPage() {
                 <p className="text-xs text-slate-500">No policies associated with this customer.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-3">
                 {policies.map((policy) => (
                   <Link
                     key={policy.id}
@@ -1200,7 +1118,10 @@ export default function CustomerDetailPage() {
               </div>
             )}
           </div>
+        </div>
 
+        {/* Column 2 (Middle): Personal Notes & Logs */}
+        <div className="col-span-12 md:col-span-5 space-y-6">
           {/* Note Card */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
@@ -1226,7 +1147,7 @@ export default function CustomerDetailPage() {
           </div>
 
           {/* Statistics Metrics Cards */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <button
               onClick={() => scrollToSection('reminders-section')}
               className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3 text-left w-full hover:border-indigo-400 dark:hover:border-indigo-800 hover:shadow-xs active:scale-98 transition-all cursor-pointer"
@@ -1253,18 +1174,7 @@ export default function CustomerDetailPage() {
               </div>
             </button>
 
-            <button
-              onClick={() => scrollToSection('gifts-section')}
-              className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3 text-left w-full hover:border-indigo-400 dark:hover:border-indigo-800 hover:shadow-xs active:scale-98 transition-all cursor-pointer"
-            >
-              <div className="h-9 w-9 rounded-xl bg-pink-50 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 flex items-center justify-center shrink-0">
-                <Gift className="h-4.5 w-4.5" />
-              </div>
-              <div className="text-xs">
-                <span className="block text-slate-400 font-bold uppercase text-[9px] tracking-wide">Gifts Cost</span>
-                <span className="font-semibold text-slate-855 dark:text-slate-200">฿{totalGiftsCost.toLocaleString()}</span>
-              </div>
-            </button>
+            
           </div>
 
           {/* Reminders List Section */}
@@ -1520,9 +1430,7 @@ export default function CustomerDetailPage() {
           </div>
 
           {/* Double Column for Activities and Gifts logs */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            
-            {/* Activities Timeline Log */}
+          {/* Activities Timeline Log */}
             <div id="activities-section" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 scroll-mt-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1">
@@ -1669,137 +1577,254 @@ export default function CustomerDetailPage() {
                 })()
               )}
             </div>
+        </div>
 
-            {/* Gifts Log */}
-            <div id="gifts-section" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 scroll-mt-6">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                  <Gift className="h-4 w-4" /> Gifts Tracker (฿{totalGiftsCost.toLocaleString()})
-                </h3>
+        {/* Column 3 (Right): AI Relationship Assistant */}
+        <div className="col-span-12 md:col-span-4 space-y-6">
+          
+          {/* AI Relationship Assistant */}
+          <div className="bg-gradient-to-br from-indigo-500/[0.03] to-purple-500/[0.03] dark:from-indigo-950/10 dark:to-purple-950/10 border border-indigo-150/80 dark:border-indigo-900/30 rounded-3xl p-6 shadow-sm space-y-5">
+            <div className="flex flex-col gap-3 justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-655 dark:text-indigo-400">
+                  <Sparkles className="h-5 w-5 drop-shadow-[0_0_4px_rgba(99,102,241,0.4)]" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+                    AI Relationship Assistant
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    ผู้ช่วยวิเคราะห์ข้อมูลและความสัมพันธ์ลูกค้า
+                  </p>
+                </div>
+              </div>
+              
+              {/* Tabs Switcher */}
+              <div className="flex border-b border-slate-100 dark:border-slate-800/60 p-0.5 bg-slate-100/60 dark:bg-slate-950/40 rounded-xl text-[10px] font-bold">
                 <button
-                  onClick={() => {
-                    setSelectedGift(null)
-                    setShowGiftForm(true)
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-650 dark:text-indigo-405 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                  onClick={() => setAiActiveTab('overview')}
+                  className={`flex-1 py-1.5 rounded-lg text-center cursor-pointer transition-all ${
+                    aiActiveTab === 'overview'
+                      ? 'bg-white dark:bg-slate-900 text-indigo-655 dark:text-indigo-400 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
                 >
-                  <Plus className="h-3.5 w-3.5" /> Record
+                  สรุปภาพรวม (Overview)
+                </button>
+                <button
+                  onClick={() => setAiActiveTab('chat')}
+                  className={`flex-1 py-1.5 rounded-lg text-center cursor-pointer transition-all ${
+                    aiActiveTab === 'chat'
+                      ? 'bg-white dark:bg-slate-900 text-indigo-655 dark:text-indigo-400 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  คุยกับ AI (Chat)
                 </button>
               </div>
-
-              {gifts.length === 0 ? (
-                <div className="text-center py-8 border border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
-                  <Gift className="h-6 w-6 text-slate-350 mx-auto mb-2" />
-                  <p className="text-xs text-slate-500">No gifts recorded yet.</p>
-                </div>
-              ) : (
-                (() => {
-                  const giftSwipeableItems = gifts.map((g) => {
-                    const dateStr = new Date(g.gift_date).toLocaleDateString('th-TH', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: '2-digit'
-                    })
-
-                    const leftActions: SwipeAction[] = isTouchDevice ? [
-                      {
-                        id: 'edit',
-                        label: 'Edit',
-                        icon: <Edit2 className="h-4 w-4" />,
-                        tone: 'primary'
-                      }
-                    ] : []
-
-                    const rightActions: SwipeAction[] = isTouchDevice ? [
-                      {
-                        id: 'delete',
-                        label: 'Delete',
-                        icon: <Trash2 className="h-4 w-4" />,
-                        tone: 'danger'
-                      }
-                    ] : []
-
-                    return {
-                      id: g.id,
-                      leftActions,
-                      rightActions,
-                      className: 'bg-slate-50/50 border-slate-100 dark:bg-slate-900/30',
-                      content: (
-                        <div className="flex items-center justify-between gap-4 text-xs w-full select-none">
-                          <div className="space-y-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-880 dark:text-slate-200">
-                                {g.gift_name}
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-medium">
-                                {dateStr}
-                              </span>
-                            </div>
-                            {g.note && (
-                              <p className="text-[11px] text-slate-505">{g.note}</p>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-3 shrink-0">
-                            <span className="font-bold text-indigo-650 dark:text-indigo-400">
-                              ฿{g.gift_cost?.toLocaleString()}
-                            </span>
-                            
-                            {/* Desktop Direct Actions (Non-touch) */}
-                            {!isTouchDevice && (
-                              <div className="flex items-center gap-1.5 pl-3 border-l border-slate-200 dark:border-slate-800">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setSelectedGift(g)
-                                    setShowGiftForm(true)
-                                  }}
-                                  className="p-1.5 rounded-lg text-slate-500 bg-slate-105 dark:bg-slate-800 hover:bg-slate-200 hover:text-slate-700 transition-colors cursor-pointer"
-                                  title="Edit"
-                                >
-                                  <Edit2 className="h-4 w-4" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleDeleteGift(g.id)
-                                  }}
-                                  className="p-1.5 rounded-lg text-rose-600 bg-rose-50 dark:bg-rose-950/20 hover:bg-rose-100 hover:text-rose-750 transition-colors cursor-pointer"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    }
-                  })
-
-                  return (
-                    <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
-                      <SwipeableList
-                        items={giftSwipeableItems}
-                        dragDisabled={!isTouchDevice}
-                        onAction={({ item, action }) => {
-                          if (action.id === 'edit') {
-                            const g = gifts.find(gift => gift.id === item.id)
-                            if (g) {
-                              setSelectedGift(g)
-                              setShowGiftForm(true)
-                            }
-                          } else if (action.id === 'delete') {
-                            handleDeleteGift(item.id)
-                          }
-                        }}
-                      />
-                    </div>
-                  )
-                })()
-              )}
             </div>
+
+            {aiActiveTab === 'overview' && (
+              <div className="space-y-4">
+                {!customer.ai_last_generated_at ? (
+                  <div className="text-center py-6 px-4 bg-white/50 dark:bg-slate-900/40 rounded-2xl border border-dashed border-indigo-100 dark:border-indigo-900/20 space-y-3">
+                    <Sparkles className="h-8 w-8 text-indigo-400/80 mx-auto animate-pulse" />
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-slate-880 dark:text-slate-200">ยังไม่ได้เปิดใช้งานการวิเคราะห์ข้อมูลความสัมพันธ์</h4>
+                      <p className="text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
+                        ใช้ AI ประเมินประวัติ ความต้องการความคุ้มครอง และความเสี่ยงในการจ่ายเบี้ย เพื่อรับคำแนะนำระดับ สรุปพฤติกรรม และร่างข้อความสำหรับติดตามลูกค้าทันที
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleGenerateAI}
+                      disabled={isAnalyzing}
+                      className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/30 text-indigo-650 dark:text-indigo-400 text-xs font-bold rounded-xl transition-colors shadow-sm inline-flex items-center gap-1.5 w-full justify-center"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" /> เริ่มวิเคราะห์ลูกค้ารายนี้
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                {/* 1. Relationship Summary */}
+                <div className="space-y-1.5">
+                  <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    สรุปผลการวิเคราะห์ความคุ้มครองและความสัมพันธ์
+                  </h4>
+                  <div className="p-4 bg-white dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 rounded-2xl text-xs text-slate-700 dark:text-slate-350 leading-relaxed shadow-sm">
+                    {customer.ai_summary}
+                  </div>
+                </div>
+
+                {/* 2. Level Recommendation Banner */}
+                {customer.ai_suggested_level_id && (
+                  <div className="space-y-1.5">
+                    <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                      ระดับที่แนะนำ
+                    </h4>
+                    
+                    {customer.ai_suggested_level_id !== customer.customer_level_id ? (
+                      <div className="p-4 bg-amber-500/5 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-900/20 rounded-2xl flex flex-col justify-between gap-3 shadow-sm">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-amber-800 dark:text-amber-400">
+                              แนะนำให้อัปเดตระดับเป็น:
+                            </span>
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[10px] font-extrabold border uppercase bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800"
+                              style={{
+                                color: levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color || undefined,
+                                borderColor: levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color ? `${levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color}40` : undefined,
+                                backgroundColor: levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color ? `${levelsList.find(l => l.id === customer.ai_suggested_level_id)?.color}10` : undefined,
+                              }}
+                            >
+                              {levelsList.find(l => l.id === customer.ai_suggested_level_id)?.name || 'Unknown'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-505 dark:text-slate-455 leading-relaxed font-medium">
+                            {customer.ai_suggested_level_reason}
+                          </p>
+                        </div>
+                        
+                        <button
+                          onClick={handleApplySuggestedLevel}
+                          disabled={isUpdatingLevel}
+                          className="w-full py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-extrabold shadow-sm flex items-center justify-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {isUpdatingLevel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
+                          ปรับใช้ระดับนี้
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-3.5 bg-emerald-500/5 dark:bg-emerald-950/10 border border-emerald-100/50 dark:border-emerald-900/20 rounded-2xl flex items-center gap-2 shadow-sm">
+                        <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-455 shrink-0" />
+                        <p className="text-[11px] text-emerald-800 dark:text-emerald-400 font-medium">
+                          ระดับปัจจุบันตรงตามคำแนะนำของ AI แล้ว ({levelsList.find(l => l.id === customer.customer_level_id)?.name})
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. Special Attention Required Badge */}
+                {customer.needs_special_follow_up && (
+                  <div className="p-3.5 bg-red-500/5 dark:bg-red-950/15 border border-red-200/50 dark:border-red-900/30 rounded-2xl flex items-center gap-2 shadow-sm">
+                    <AlertTriangle className="h-4 w-4 text-red-655 dark:text-red-400 shrink-0" />
+                    <p className="text-[11px] text-red-800 dark:text-red-400 font-bold">
+                      ต้องได้รับการดูแลชำระเบี้ยพิเศษ: ตรวจพบประวัติเลื่อนจ่ายหรือเบี้ยค้างชำระกรุณาติดตามความสัมพันธ์ด่วน
+                    </p>
+                  </div>
+                )}
+
+                {/* Last generated timestamp */}
+                {customer.ai_last_generated_at && (
+                  <div className="flex justify-between items-center text-[10px] text-slate-400 dark:text-slate-500 font-medium border-t border-slate-100 dark:border-slate-800/60 pt-3.5 mt-2">
+                    <button
+                      onClick={handleGenerateAI}
+                      disabled={isAnalyzing}
+                      className="flex items-center gap-1.5 text-indigo-650 dark:text-indigo-400 hover:text-indigo-500 cursor-pointer font-bold transition-colors disabled:opacity-50"
+                    >
+                      <RotateCcw className={`h-3.5 w-3.5 ${isAnalyzing ? 'animate-spin' : ''}`} />
+                      วิเคราะห์ใหม่ (Refresh)
+                    </button>
+                    <span>
+                      วิเคราะห์เมื่อ: {new Date(customer.ai_last_generated_at).toLocaleString('th-TH')}
+                    </span>
+                  </div>
+                )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {aiActiveTab === 'chat' && (
+              <div className="flex flex-col h-[400px] bg-slate-50/50 dark:bg-slate-950/20 rounded-2xl border border-slate-150 dark:border-slate-800 p-3.5 space-y-3.5 overflow-hidden">
+                {/* Message list container */}
+                <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 text-xs">
+                  {/* AI initial message */}
+                  <div className="flex flex-col gap-1.5 bg-slate-100/70 dark:bg-slate-800/40 p-3 rounded-2xl rounded-tl-none border border-slate-100/50 dark:border-slate-800/30 text-slate-700 dark:text-slate-350">
+                    <p className="font-bold text-slate-900 dark:text-white">
+                      สวัสดีครับ! ผมเป็นผู้ช่วย AI ของคุณสำหรับดูแลคุณ {customer.full_name} 
+                    </p>
+                    <p>ต้องการทราบประวัติการติดต่อ กรมธรรม์ หรือสถานะงานติดตามเรื่องไหน สอบถามได้เลยครับ เช่น:</p>
+                    
+                    {/* Suggestion Chips */}
+                    <div className="flex flex-col gap-1.5 mt-2">
+                      <button
+                        onClick={() => handleSendChatMessage('ลูกค้ามีประวัติกิจกรรมอะไรบ้าง? ทำช่วงไหน?')}
+                        className="text-left px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 hover:border-indigo-200 hover:text-indigo-650 cursor-pointer transition-all text-[11px] font-medium text-slate-800 dark:text-slate-200"
+                      >
+                        💡 ลูกค้ามีประวัติกิจกรรมอะไรบ้าง?
+                      </button>
+                      <button
+                        onClick={() => handleSendChatMessage('ขอรายละเอียดและกำหนดชำระเบี้ยของกรมธรรม์ของลูกค้ารายนี้')}
+                        className="text-left px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 hover:border-indigo-200 hover:text-indigo-650 cursor-pointer transition-all text-[11px] font-medium text-slate-800 dark:text-slate-200"
+                      >
+                        💡 กรมธรรม์และกำหนดชำระเบี้ยถัดไปคือเมื่อไหร่?
+                      </button>
+                      <button
+                        onClick={() => handleSendChatMessage('ลูกค้าคนนี้มีสิทธิประโยชน์หรือระดับความสัมพันธ์ปัจจุบันอย่างไร?')}
+                        className="text-left px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/30 hover:border-indigo-200 hover:text-indigo-650 cursor-pointer transition-all text-[11px] font-medium text-slate-800 dark:text-slate-200"
+                      >
+                        💡 ภาพรวมและคำแนะนำระดับลูกค้าในตอนนี้คืออะไร?
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Render conversation history */}
+                  {chatHistory.map((msg, index) => (
+                    <div
+                      key={index}
+                      className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                    >
+                      <div
+                        className={`p-3 rounded-2xl text-[11px] font-medium leading-relaxed max-w-[85%] whitespace-pre-wrap ${
+                          msg.role === 'user'
+                            ? 'bg-indigo-600 text-white rounded-tr-none shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none shadow-2xs border border-slate-150 dark:border-slate-800/60'
+                        }`}
+                      >
+                        {msg.text}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Typing Indicator */}
+                  {isSendingChat && (
+                    <div className="flex items-center gap-1.5 text-slate-400 font-medium pl-1.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
+                      <span className="text-[10px] animate-pulse">กำลังประมวลผลคำตอบ...</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Input box */}
+                <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                  <input
+                    type="text"
+                    value={chatMessage}
+                    onChange={(e) => setChatMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        handleSendChatMessage()
+                      }
+                    }}
+                    placeholder="พิมพ์คำถามเกี่ยวกับลูกค้า..."
+                    className="flex-1 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-all font-medium text-slate-900 dark:text-white"
+                    disabled={isSendingChat}
+                  />
+                  <button
+                    onClick={() => handleSendChatMessage()}
+                    disabled={isSendingChat || !chatMessage.trim()}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center shrink-0"
+                  >
+                    ส่ง
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+
         </div>
       </div>
 
@@ -1843,11 +1868,13 @@ export default function CustomerDetailPage() {
           activity={selectedActivity}
           defaultType={defaultActivityType}
           defaultSummary={defaultActivitySummary}
+          hideGiftOption={hideGiftOptionInForm}
           onClose={() => {
             setShowActivityForm(false)
             setSelectedActivity(null)
             setDefaultActivityType(undefined)
             setDefaultActivitySummary(undefined)
+            setHideGiftOptionInForm(false)
           }}
           onSaved={loadAllData}
         />

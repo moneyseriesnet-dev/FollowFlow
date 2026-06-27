@@ -21,7 +21,7 @@ export function getGoogleOAuthUrl(origin: string): string {
   }
 
   const redirectUri = `${origin}/api/auth/google/callback`
-  const scope = 'https://www.googleapis.com/auth/calendar.events'
+  const scope = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email'
   
   return `https://accounts.google.com/o/oauth2/v2/auth?` + 
     `client_id=${GOOGLE_CLIENT_ID}` +
@@ -64,10 +64,27 @@ export async function exchangeCodeForTokens(code: string, origin: string) {
   // Calculate expiry date
   const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString()
 
+  // Fetch the user's email using the access token
+  let email = null
+  try {
+    const userinfoRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${data.access_token}` },
+    })
+    if (userinfoRes.ok) {
+      const userinfo = await userinfoRes.json()
+      email = userinfo.email
+    } else {
+      console.warn('Failed to fetch Google userinfo during token exchange:', await userinfoRes.text())
+    }
+  } catch (err) {
+    console.error('Error fetching Google userinfo during token exchange:', err)
+  }
+
   return {
     access_token: data.access_token,
     refresh_token: data.refresh_token, // Only present on initial connection
     expires_at: expiresAt,
+    email,
   }
 }
 

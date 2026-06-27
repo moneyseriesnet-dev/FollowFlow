@@ -83,14 +83,20 @@ export async function saveDraftRows(
   if (error) throw error
 
   // Update total rows detected in batch
-  const { data: countData } = await supabase
+  const { count, error: countErr } = await supabase
     .from('import_draft_rows')
-    .select('id', { count: 'exact', head: true })
+    .select('*', { count: 'exact', head: true })
     .eq('import_batch_id', batchId)
+
+  if (countErr) {
+    console.error('Failed to count draft rows:', countErr)
+  }
+
+  const totalRows = count !== null ? count : rows.length
 
   await supabase
     .from('import_batches')
-    .update({ total_rows_detected: countData ? countData.length : rows.length })
+    .update({ total_rows_detected: totalRows })
     .eq('id', batchId)
 
   return data
@@ -132,7 +138,7 @@ export async function approveAndImportRows(
         .insert({
           owner_id: ownerId,
           full_name: normalizedName,
-          birth_date: row.detected_birth_date,
+          birth_date: row.detected_birth_date || null,
           status: 'active',
         })
         .select()
@@ -156,10 +162,10 @@ export async function approveAndImportRows(
       customer_id: customerId,
       company: row.detected_company || 'OTHER',
       policy_number: row.detected_policy_number,
-      plan_name: row.detected_plan_name,
-      premium_amount: row.detected_premium_amount,
+      plan_name: row.detected_plan_name || null,
+      premium_amount: row.detected_premium_amount || null,
       payment_frequency: (row.detected_payment_frequency as any) || 'monthly',
-      next_premium_due_date: row.detected_due_date,
+      next_premium_due_date: row.detected_due_date || null,
       source: 'ocr_import' as const,
       policy_status: 'active' as const,
     }

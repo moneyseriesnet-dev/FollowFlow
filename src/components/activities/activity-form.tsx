@@ -11,6 +11,7 @@ interface ActivityFormProps {
   onSaved: () => void
   defaultType?: string
   defaultSummary?: string
+  hideGiftOption?: boolean
 }
 
 export default function ActivityForm({ 
@@ -19,7 +20,8 @@ export default function ActivityForm({
   onClose, 
   onSaved, 
   defaultType, 
-  defaultSummary 
+  defaultSummary,
+  hideGiftOption = false
 }: ActivityFormProps) {
   const supabase = createClient() as any
   const [loading, setLoading] = useState(false)
@@ -52,6 +54,12 @@ export default function ActivityForm({
   const [nextActionDate, setNextActionDate] = useState(activity?.next_action_date || '')
   const [error, setError] = useState<string | null>(null)
 
+  // Gift integration fields
+  const [giftId, setGiftId] = useState<string | null>(null)
+  const [hasGift, setHasGift] = useState(false)
+  const [giftName, setGiftName] = useState('')
+  const [giftCost, setGiftCost] = useState('')
+
   // Fetch policies and reminders for the dropdown options
   useEffect(() => {
     async function fetchOptions() {
@@ -74,6 +82,24 @@ export default function ActivityForm({
           .in('status', ['pending', 'snoozed'])
         if (remsErr) throw remsErr
         setReminders(rems || [])
+
+        // 3. Fetch linked gift if editing
+        if (activity?.id) {
+          const { data: giftData, error: giftErr } = await supabase
+            .from('gifts')
+            .select('id, gift_name, gift_cost')
+            .eq('activity_id', activity.id)
+            .maybeSingle()
+          
+          if (giftErr) {
+            console.error('Failed to load linked gift:', giftErr)
+          } else if (giftData) {
+            setGiftId(giftData.id)
+            setHasGift(true)
+            setGiftName(giftData.gift_name)
+            setGiftCost(String(giftData.gift_cost))
+          }
+        }
 
       } catch (err: any) {
         console.error('Failed to load activity details selection options:', err)
@@ -113,6 +139,8 @@ export default function ActivityForm({
         updated_by: user.id,
       }
 
+      let savedActivityId = activity?.id || null
+
       if (activity?.id) {
         // Reset to pending if the next action date is updated
         if (activity.next_action_date !== nextActionDate) {
@@ -127,7 +155,7 @@ export default function ActivityForm({
         if (saveErr) throw saveErr
       } else {
         // Insert mode
-        const { error: saveErr } = await supabase
+        const { data: insertedData, error: saveErr } = await supabase
           .from('activities')
           .insert({
             ...payload,
@@ -135,7 +163,53 @@ export default function ActivityForm({
             next_action_completed_at: null,
             created_by: user.id,
           })
+          .select('id')
+          .single()
         if (saveErr) throw saveErr
+        savedActivityId = insertedData.id
+      }
+
+      // Handle linked gift saving/updating/deleting
+      if (hasGift) {
+        if (!giftName.trim()) {
+          throw new Error('กรุณาระบุชื่อของขวัญ/บริการ')
+        }
+
+        const giftPayload = {
+          owner_id: user.id,
+          customer_id: customerId,
+          activity_id: savedActivityId,
+          gift_name: giftName.trim(),
+          gift_cost: giftCost ? parseFloat(giftCost) : 0,
+          gift_date: activityDate.split('T')[0],
+          note: `Linked to activity: ${activityType} on ${activityDate.split('T')[0]}`,
+          updated_by: user.id,
+        }
+
+        if (giftId) {
+          // Update existing gift
+          const { error: giftErr } = await supabase
+            .from('gifts')
+            .update(giftPayload)
+            .eq('id', giftId)
+          if (giftErr) throw giftErr
+        } else {
+          // Insert new gift
+          const { error: giftErr } = await supabase
+            .from('gifts')
+            .insert({
+              ...giftPayload,
+              created_by: user.id,
+            })
+          if (giftErr) throw giftErr
+        }
+      } else if (giftId) {
+        // Delete gift if unlinked/disabled
+        const { error: giftDelErr } = await supabase
+          .from('gifts')
+          .delete()
+          .eq('id', giftId)
+        if (giftDelErr) throw giftDelErr
       }
 
       onSaved()
@@ -306,6 +380,53 @@ export default function ActivityForm({
               />
             </div>
           </div>
+
+          {/* Gift Section */}
+          {!hideGiftOption && (
+            <div className="border-t border-slate-100 dark:border-slate-800/60 pt-3 space-y-3">
+              <label className="flex items-center gap-2 font-bold text-slate-750 dark:text-slate-350 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={hasGift}
+                  onChange={(e) => setHasGift(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                />
+                <span>🎁 มีของขวัญ / ค่าใช้จ่ายมอบให้ในกิจกรรมนี้ (Include Gift)</span>
+              </label>
+
+              {hasGift && (
+                <div className="grid grid-cols-2 gap-4 pl-6 animate-fadeIn transition-all">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">
+                      Gift Name (ชื่อของของขวัญ) *
+                    </label>
+                    <input
+                      type="text"
+                      value={giftName}
+                      onChange={(e) => setGiftName(e.target.value)}
+                      placeholder="เช่น ขนมเค้กวันเกิด, ปฏิทิน AIA"
+                      required={hasGift}
+                      className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">
+                      Gift Cost (มูลค่า/ราคาบาท)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={giftCost}
+                      onChange={(e) => setGiftCost(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="flex gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
