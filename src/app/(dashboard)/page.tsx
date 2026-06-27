@@ -161,8 +161,8 @@ export default function DashboardPage() {
               const dueDate = parseISO(policy.next_premium_due_date)
               const daysUntilDue = differenceInDays(dueDate, today)
 
-              // Only show if the due date is within 21 days / 3 weeks (including overdue)
-              if (Math.abs(daysUntilDue) > 21) return
+              // Only show if the due date is within 30 days (including overdue)
+              if (Math.abs(daysUntilDue) > 30) return
 
               let priorityRank = 6
               let priorityLabel = '🔵 Premium Due 30 Days'
@@ -222,8 +222,8 @@ export default function DashboardPage() {
               const due = parseISO(rem.due_date)
               const daysDiff = differenceInDays(due, today)
 
-              // Only show if the reminder is within 21 days / 3 weeks (past or future)
-              if (Math.abs(daysDiff) > 21) return
+              // Only show if the reminder is within 30 days (past or future)
+              if (Math.abs(daysDiff) > 30) return
               
               // Priority 1: Overdue pending reminders
               if (rem.due_date < todayStr) {
@@ -261,13 +261,13 @@ export default function DashboardPage() {
                 return
               }
 
-              // Priority 8: Birthday within 21 days
-              if (rem.reminder_type === 'birthday' && daysDiff > 1 && daysDiff <= 21) {
+              // Priority 8: Birthday within 30 days
+              if (rem.reminder_type === 'birthday' && daysDiff > 1 && daysDiff <= 30) {
                 items.push({
                   id: rem.id,
                   type: 'reminder',
                   priorityRank: 8,
-                  priorityLabel: '🎂 Birthday 21 Days',
+                  priorityLabel: '🎂 Birthday 30 Days',
                   title: rem.title,
                   subtitle: rem.description || '',
                   dueDate: rem.due_date,
@@ -279,8 +279,8 @@ export default function DashboardPage() {
                 return
               }
 
-              // Priority 9: Financial Review due within 21 days
-              if (rem.reminder_type === 'financial_review' && daysDiff <= 21) {
+              // Priority 9: Financial Review due
+              if (rem.reminder_type === 'financial_review' && daysDiff <= 30) {
                 items.push({
                   id: rem.id,
                   type: 'reminder',
@@ -297,8 +297,8 @@ export default function DashboardPage() {
                 return
               }
 
-              // Priority 9: General / Follow-up / Other reminders due within 21 days
-              if (daysDiff >= 0 && daysDiff <= 21) {
+              // Priority 9: General / Follow-up / Other reminders due within 30 days
+              if (daysDiff >= 0 && daysDiff <= 30) {
                 const isFollowUp = rem.reminder_type === 'follow_up'
                 items.push({
                   id: rem.id,
