@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import Sidebar from '@/components/layout/sidebar'
 import BottomNav from '@/components/layout/bottom-nav'
 import Header from '@/components/layout/header'
 
@@ -22,11 +21,8 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
-      {/* Sidebar for Desktop */}
-      <Sidebar />
-
       {/* Main layout container containing header + content */}
-      <div className="flex flex-col lg:pl-64 min-h-screen">
+      <div className="flex flex-col min-h-screen">
         {/* Sticky Header */}
         <Header />
 

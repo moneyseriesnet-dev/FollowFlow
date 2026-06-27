@@ -15,7 +15,8 @@ import {
   Users,
   Loader2,
   Trash2,
-  Edit2
+  Edit2,
+  BarChart3
 } from 'lucide-react'
 import Link from 'next/link'
 import GiftForm from '@/components/gifts/gift-form'
@@ -31,7 +32,9 @@ export default function GiftsPage() {
 
   // Search & Navigation States
   const [searchQuery, setSearchQuery] = useState('')
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<'logs' | 'analytics'>('logs')
+  const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null)
   
   // Gift creation popup state
   const [showCustomerSelectModal, setShowCustomerSelectModal] = useState(false)
@@ -122,6 +125,23 @@ export default function GiftsPage() {
 
   // Average gift cost this month
   const avgCostMonth = giftsThisMonth.length > 0 ? totalCostMonth / giftsThisMonth.length : 0
+
+  // Calculate monthly trend data for the current year
+  const monthlyTrendData = Array.from({ length: 12 }, (_, i) => {
+    const monthGifts = giftsThisYear.filter((g) => {
+      const d = new Date(g.gift_date)
+      return d.getMonth() === i
+    })
+    const total = monthGifts.reduce((acc, curr) => acc + (Number(curr.gift_cost) || 0), 0)
+    return {
+      monthIndex: i,
+      monthName: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][i],
+      monthNameEn: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][i],
+      total
+    }
+  })
+
+  const maxMonthlyTotal = Math.max(...monthlyTrendData.map((d) => d.total), 1000)
 
   // --- REPORT BREAKDOWNS ---
   
@@ -241,6 +261,11 @@ export default function GiftsPage() {
     return custName.includes(search) || giftName.includes(search) || note.includes(search)
   })
 
+  // Filter customers for selection in the modal
+  const filteredCustomersForSelect = customers.filter((c) => {
+    return c.full_name?.toLowerCase().includes(customerSearchQuery.toLowerCase())
+  })
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -269,6 +294,7 @@ export default function GiftsPage() {
         <button
           onClick={() => {
             setSelectedCustomerId('')
+            setCustomerSearchQuery('')
             setShowCustomerSelectModal(true)
           }}
           className="flex h-10 w-10 items-center justify-center rounded-full bg-pink-600 text-white shadow-lg shadow-pink-500/25 transition-transform active:scale-95 cursor-pointer"
@@ -456,6 +482,176 @@ export default function GiftsPage() {
       ) : (
         // ANALYTICS TAB CONTENT
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Monthly Trend Chart Card */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <BarChart3 className="h-4.5 w-4.5" /> Monthly Spending Trend (แนวโน้มค่าใช้จ่ายรายเดือน)
+                </h3>
+                <p className="text-[10px] text-slate-555 mt-0.5">
+                  Monthly summary for the calendar year {thisYear + 543}
+                </p>
+              </div>
+              
+              {/* Dynamic Value Display */}
+              <div className="text-right">
+                {hoveredBarIndex !== null ? (
+                  <>
+                    <span className="text-[10px] font-bold text-pink-650 dark:text-pink-400 uppercase tracking-wider">
+                      {monthlyTrendData[hoveredBarIndex].monthNameEn} ({monthlyTrendData[hoveredBarIndex].monthName})
+                    </span>
+                    <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                      ฿{monthlyTrendData[hoveredBarIndex].total.toLocaleString()}
+                    </h4>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      Annual Total ({thisYear + 543})
+                    </span>
+                    <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                      ฿{totalCostYear.toLocaleString()}
+                    </h4>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* SVG Chart */}
+            <div className="h-48 w-full flex items-center justify-center">
+              <svg viewBox="0 0 600 210" className="w-full h-full overflow-visible">
+                <defs>
+                  <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ec4899" />
+                    <stop offset="100%" stopColor="#db2777" />
+                  </linearGradient>
+                  <linearGradient id="hoverBarGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f472b6" />
+                    <stop offset="100%" stopColor="#be185d" />
+                  </linearGradient>
+                </defs>
+
+                {/* Y-Axis Gridlines & Labels */}
+                {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+                  const yVal = 160 - ratio * 140
+                  const labelVal = Math.round(ratio * maxMonthlyTotal)
+                  return (
+                    <g key={idx} className="opacity-40 dark:opacity-20">
+                      <line
+                        x1="45"
+                        y1={yVal}
+                        x2="580"
+                        y2={yVal}
+                        stroke="#cbd5e1"
+                        strokeDasharray="4 4"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x="35"
+                        y={yVal + 3}
+                        textAnchor="end"
+                        className="fill-slate-400 dark:fill-slate-500 text-[9px] font-bold"
+                      >
+                        {labelVal >= 1000 ? `${(labelVal / 1000).toFixed(0)}k` : labelVal}
+                      </text>
+                    </g>
+                  )
+                })}
+
+                {/* Bars */}
+                {monthlyTrendData.map((d, i) => {
+                  const x = 55 + i * 44
+                  const barHeight = (d.total / maxMonthlyTotal) * 140
+                  const y = 160 - barHeight
+                  const isHovered = hoveredBarIndex === i
+
+                  return (
+                    <g
+                      key={i}
+                      onMouseEnter={() => setHoveredBarIndex(i)}
+                      onMouseLeave={() => setHoveredBarIndex(null)}
+                      className="cursor-pointer group/bar"
+                    >
+                      {/* Transparent wider hover target rect */}
+                      <rect
+                        x={x - 12}
+                        y="10"
+                        width="44"
+                        height="160"
+                        fill="transparent"
+                      />
+                      
+                      {/* Active bar highlight background */}
+                      {isHovered && (
+                        <rect
+                          x={x - 6}
+                          y="15"
+                          width="32"
+                          height="150"
+                          rx="6"
+                          className="fill-slate-100/55 dark:fill-slate-800/30 transition-all duration-200"
+                        />
+                      )}
+
+                      {/* Actual Bar */}
+                      <rect
+                        x={x}
+                        y={y}
+                        width="20"
+                        height={barHeight || 1}
+                        rx="4"
+                        fill={isHovered ? "url(#hoverBarGradient)" : "url(#barGradient)"}
+                        className="transition-all duration-200"
+                      />
+
+                      {/* X-axis Month label */}
+                      <text
+                        x={x + 10}
+                        y="180"
+                        textAnchor="middle"
+                        className={`text-[10px] font-bold transition-colors duration-150 ${
+                          isHovered
+                            ? "fill-pink-650 dark:fill-pink-400 font-extrabold"
+                            : "fill-slate-400 dark:fill-slate-500"
+                        }`}
+                      >
+                        {d.monthName}
+                      </text>
+
+                      {/* Value Label on Top of hovered bar */}
+                      {d.total > 0 && (
+                        <text
+                          x={x + 10}
+                          y={y - 8}
+                          textAnchor="middle"
+                          className={`text-[9px] font-black transition-all duration-150 ${
+                            isHovered
+                              ? "fill-slate-900 dark:fill-white opacity-100 scale-105"
+                              : "fill-slate-555 dark:fill-slate-400 opacity-0 group-hover/bar:opacity-100"
+                          }`}
+                        >
+                          ฿{d.total.toLocaleString()}
+                        </text>
+                      )}
+                    </g>
+                  )
+                })}
+
+                {/* X Axis Line */}
+                <line
+                  x1="45"
+                  y1="160"
+                  x2="580"
+                  y2="160"
+                  stroke="#94a3b8"
+                  strokeWidth="1.5"
+                  className="opacity-45 dark:opacity-20"
+                />
+              </svg>
+            </div>
+          </div>
+
           {/* Company cost breakdown card */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -581,25 +777,55 @@ export default function GiftsPage() {
           <div className="relative w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">Record Gift - Select Customer</h3>
-              <p className="text-[10px] text-slate-555 mt-0.5">Please choose which customer receives this gift</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Please choose which customer receives this gift</p>
             </div>
             
             <div className="space-y-3">
-              <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">
+              <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">
                 Select Customer (เลือกลูกค้า) *
               </label>
-              <select
-                value={selectedCustomerId}
-                onChange={(e) => setSelectedCustomerId(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none text-xs"
-              >
-                <option value="">-- Choose Customer --</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.full_name}
-                  </option>
-                ))}
-              </select>
+
+              {/* Customer Search Input */}
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="ค้นหาชื่อลูกค้า..."
+                  value={customerSearchQuery}
+                  onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                  className="w-full h-10 pl-9 pr-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950 focus:border-indigo-500 focus:outline-none text-xs"
+                />
+              </div>
+
+              {/* Customer List */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 bg-white dark:bg-slate-900">
+                {filteredCustomersForSelect.length === 0 ? (
+                  <div className="p-3 text-center text-slate-455 text-xs">
+                    ไม่พบข้อมูลลูกค้า
+                  </div>
+                ) : (
+                  filteredCustomersForSelect.map((c) => {
+                    const isSelected = selectedCustomerId === c.id
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setSelectedCustomerId(c.id)}
+                        className={`w-full text-left p-2.5 px-3.5 text-xs transition-colors flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-pink-50 dark:bg-pink-950/20 text-pink-650 dark:text-pink-400 font-semibold'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-350'
+                        }`}
+                      >
+                        <span>{c.full_name}</span>
+                        {isSelected && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-pink-600 dark:bg-pink-550" />
+                        )}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
             </div>
 
             <div className="flex gap-3 pt-2">

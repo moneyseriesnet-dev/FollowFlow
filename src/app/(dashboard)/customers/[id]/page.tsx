@@ -29,7 +29,6 @@ import {
   Users,
   CheckCircle,
   Copy,
-  RefreshCw,
   Crown,
   Star,
   Flame,
@@ -37,7 +36,9 @@ import {
   TrendingUp,
   Award,
   Zap,
-  User
+  User,
+  Check,
+  RotateCcw
 } from 'lucide-react'
 
 const AVAILABLE_ICONS = {
@@ -54,9 +55,22 @@ const AVAILABLE_ICONS = {
   User,
   AlertTriangle
 }
+
+const ACTIVITY_TYPE_LABELS: Record<string, string> = {
+  phone_call: 'โทรศัพท์',
+  line_chat: 'ไลน์คุย',
+  meeting: 'พบปะ',
+  email: 'อีเมล',
+  policy_delivery: 'ส่งมอบกรมธรรม์',
+  claim_support: 'ช่วยเหลือเคลม',
+  follow_up: 'ติดตามงาน',
+  other: 'อื่นๆ'
+}
+
 import ActivityForm from '@/components/activities/activity-form'
 import GiftForm from '@/components/gifts/gift-form'
 import ReminderModal from '@/components/reminders/reminder-modal'
+import { SwipeableList, type SwipeableListItem, type SwipeAction } from '@/components/ui/be-ui-swipeable-list'
 
 interface Customer {
   id: string
@@ -119,10 +133,19 @@ export default function CustomerDetailPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reminderTab, setReminderTab] = useState<'pending' | 'completed'>('pending')
 
   // AI states
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  const [isTouchDevice, setIsTouchDevice] = useState(false)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsTouchDevice(window.matchMedia('(pointer: coarse)').matches)
+    }
+  }, [])
 
   // Modals / forms state
   const [showActivityForm, setShowActivityForm] = useState(false)
@@ -298,6 +321,39 @@ export default function CustomerDetailPage() {
 
   const handleReminderAction = async (remId: string, newStatus: string) => {
     try {
+      if (remId.startsWith('activity-')) {
+        const actId = remId.replace('activity-', '')
+        const updateData = newStatus === 'done'
+          ? { next_action_status: 'done', next_action_completed_at: new Date().toISOString() }
+          : { next_action_status: 'pending', next_action_completed_at: null }
+        const { error: actErr } = await supabase
+          .from('activities')
+          .update(updateData)
+          .eq('id', actId)
+
+        if (actErr) throw actErr
+        loadAllData()
+        return
+      }
+
+      if (remId.startsWith('gift-')) {
+        const gId = remId.replace('gift-', '')
+        const currentTodayStr = new Date().toISOString().split('T')[0]
+        const tomorrow = new Date()
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        const newGiftDate = newStatus === 'done'
+          ? currentTodayStr
+          : tomorrow.toISOString().split('T')[0]
+        const { error: giftErr } = await supabase
+          .from('gifts')
+          .update({ gift_date: newGiftDate })
+          .eq('id', gId)
+
+        if (giftErr) throw giftErr
+        loadAllData()
+        return
+      }
+
       const updateData: any = { status: newStatus }
       if (newStatus === 'done') {
         updateData.completed_at = new Date().toISOString()
@@ -317,8 +373,6 @@ export default function CustomerDetailPage() {
         body: JSON.stringify({ reminderId: remId }),
       }).catch((err) => console.error('Failed to trigger calendar sync on action:', err))
 
-      // If premium_due is marked done, the rollover logic handles creating the next cycle
-      // via DB trigger or API. Since we handle rollover in Phase 3 service, we can trigger a refresh.
       loadAllData()
     } catch (err: any) {
       alert(err.message || 'Failed to update reminder status')
@@ -486,12 +540,71 @@ export default function CustomerDetailPage() {
     )
   }
 
-  // Deduplicate: keep only the latest (closest upcoming) reminder per type per policy.
-  // For premium_due we group by (reminder_type + policy_id), for others by reminder_type alone.
+  const getDaysDifference = (dueDateStr: string) => {
+    if (!dueDateStr) return 0
+    const today = new Date(todayStr)
+    const due = new Date(dueDateStr)
+    today.setHours(0, 0, 0, 0)
+    due.setHours(0, 0, 0, 0)
+    const diffTime = due.getTime() - today.getTime()
+    return Math.round(diffTime / (1000 * 60 * 60 * 24))
+  }
+
   const pendingReminders = (() => {
-    const allPending = reminders.filter(r => r.status === 'pending' || r.status === 'snoozed')
+    const allPending = reminders.filter(r => {
+      if (r.status !== 'pending' && r.status !== 'snoozed') return false
+      return getDaysDifference(r.due_date) <= 30
+    })
+
+    // Add virtual activity reminders
+    activities.forEach(act => {
+      if (act.next_action_date && act.next_action_status !== 'done') {
+        const daysDiff = getDaysDifference(act.next_action_date)
+        if (daysDiff <= 30) {
+          const typeLabel = ACTIVITY_TYPE_LABELS[act.activity_type] || act.activity_type
+          allPending.push({
+            id: `activity-${act.id}`,
+            customer_id: act.customer_id,
+            policy_id: act.policy_id || null,
+            reminder_type: 'follow_up',
+            title: `ติดตาม: ${typeLabel}`,
+            description: act.summary || 'กำหนดติดตามงานถัดไป',
+            due_date: act.next_action_date,
+            status: 'pending',
+            priority: 'normal',
+            source_id: act.id
+          })
+        }
+      }
+    })
+
+    // Add virtual gift reminders
+    gifts.forEach(g => {
+      if (g.gift_date) {
+        const daysDiff = getDaysDifference(g.gift_date)
+        if (daysDiff > 0 && daysDiff <= 30) {
+          allPending.push({
+            id: `gift-${g.id}`,
+            customer_id: g.customer_id,
+            policy_id: null,
+            reminder_type: 'general',
+            title: `ส่งมอบของขวัญ: ${g.gift_name}`,
+            description: g.note || 'เตรียมส่งมอบของขวัญ',
+            due_date: g.gift_date,
+            status: 'pending',
+            priority: 'normal',
+            source_id: g.id
+          })
+        }
+      }
+    })
+
     const seen = new Map<string, (typeof allPending)[0]>()
     for (const rem of allPending) {
+      if (rem.id.startsWith('activity-') || rem.id.startsWith('gift-')) {
+        seen.set(rem.id, rem)
+        continue
+      }
       const key = rem.reminder_type === 'premium_due' && rem.policy_id
         ? `${rem.reminder_type}:${rem.policy_id}`
         : rem.reminder_type
@@ -502,6 +615,82 @@ export default function CustomerDetailPage() {
     }
     return Array.from(seen.values()).sort((a, b) => a.due_date.localeCompare(b.due_date))
   })()
+
+  const getDaysBadge = (dueDateStr: string) => {
+    const diffDays = getDaysDifference(dueDateStr)
+    if (diffDays === 0) {
+      return {
+        value: 'Today',
+        label: 'Due',
+        style: 'bg-amber-500/10 border-amber-250/30 text-amber-705 dark:bg-amber-950/20 dark:border-amber-900/30 dark:text-amber-400'
+      }
+    }
+    if (diffDays > 0) {
+      return {
+        value: diffDays.toString(),
+        label: diffDays === 1 ? 'day left' : 'days left',
+        style: 'bg-indigo-500/10 border-indigo-200/30 text-indigo-705 dark:bg-indigo-950/20 dark:border-indigo-900/30 dark:text-indigo-400'
+      }
+    }
+    return {
+      value: Math.abs(diffDays).toString(),
+      label: Math.abs(diffDays) === 1 ? 'day late' : 'days late',
+      style: 'bg-red-500/10 border-red-200/30 text-red-705 dark:bg-red-950/20 dark:border-red-900/30 dark:text-red-400'
+    }
+  }
+
+  const completedReminders = (() => {
+    const allCompleted = reminders.filter(r => r.status === 'done')
+
+    // Add virtual completed activity reminders
+    activities.forEach(act => {
+      if (act.next_action_date && act.next_action_status === 'done') {
+        const typeLabel = ACTIVITY_TYPE_LABELS[act.activity_type] || act.activity_type
+        allCompleted.push({
+          id: `activity-${act.id}`,
+          customer_id: act.customer_id,
+          policy_id: act.policy_id || null,
+          reminder_type: 'follow_up',
+          title: `ติดตามแล้ว: ${typeLabel}`,
+          description: act.summary || 'ติดตามงานเสร็จสิ้น',
+          due_date: act.next_action_date,
+          completed_at: act.next_action_completed_at || act.next_action_date + 'T12:00:00.000Z',
+          status: 'done',
+          priority: 'normal',
+          source_id: act.id
+        })
+      }
+    })
+
+    // Add virtual completed gift reminders
+    gifts.forEach(g => {
+      if (g.gift_date) {
+        const daysDiff = getDaysDifference(g.gift_date)
+        if (daysDiff <= 0 && daysDiff >= -30) {
+          allCompleted.push({
+            id: `gift-${g.id}`,
+            customer_id: g.customer_id,
+            policy_id: null,
+            reminder_type: 'general',
+            title: `ส่งมอบแล้ว: ${g.gift_name}`,
+            description: g.note || 'ส่งมอบของขวัญเรียบร้อยแล้ว',
+            due_date: g.gift_date,
+            completed_at: g.gift_date + 'T12:00:00.000Z',
+            status: 'done',
+            priority: 'normal',
+            source_id: g.id
+          })
+        }
+      }
+    })
+
+    return allCompleted.sort((a, b) => {
+      const dateA = a.completed_at || a.due_date || ''
+      const dateB = b.completed_at || b.due_date || ''
+      return dateB.localeCompare(dateA)
+    })
+  })()
+  
   const totalGiftsCost = gifts.reduce((acc, curr) => acc + (Number(curr.gift_cost) || 0), 0)
 
   return (
@@ -524,7 +713,7 @@ export default function CustomerDetailPage() {
           </Link>
           <button
             onClick={() => setShowDeleteModal(true)}
-            className="flex items-center gap-1 px-4 py-2 border border-red-200 bg-red-50 dark:bg-red-950/20 text-red-650 dark:text-red-400 rounded-xl text-xs font-semibold hover:bg-red-100 dark:hover:bg-red-950/40 transition-colors shadow-sm"
+            className="flex items-center gap-1 px-4 py-2 border border-red-200 bg-red-50 dark:bg-red-950/20 text-red-655 dark:text-red-400 rounded-xl text-xs font-semibold hover:bg-red-100 dark:hover:bg-red-950/40 transition-colors shadow-sm"
           >
             <Trash2 className="h-3.5 w-3.5" /> Delete
           </button>
@@ -535,7 +724,7 @@ export default function CustomerDetailPage() {
       {qualifiesForWatchlist && !isAlreadyWatchlist && (
         <div className="bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-rose-600/15 border border-rose-250 dark:border-rose-900/40 rounded-3xl p-5 shadow-sm flex items-center justify-between gap-4 animate-fade-in">
           <div className="flex items-start gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-rose-500/20 text-rose-600 dark:text-rose-450 flex items-center justify-center shrink-0">
+            <div className="h-10 w-10 rounded-2xl bg-rose-500/20 text-rose-600 dark:text-rose-455 flex items-center justify-center shrink-0">
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div>
@@ -572,8 +761,8 @@ export default function CustomerDetailPage() {
               <div className="relative">
                 <button
                   onClick={() => setShowActivityDropdown(!showActivityDropdown)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-650 dark:text-indigo-400 hover:bg-indigo-100/80 dark:hover:bg-indigo-900/50 border border-indigo-150/50 dark:border-indigo-900/40 transition-all active:scale-95 shadow-sm cursor-pointer"
-                  title="Add Activity (เพิ่มกิจกรรม)"
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-655 dark:text-indigo-400 hover:bg-indigo-100/80 dark:hover:bg-indigo-900/50 border border-indigo-150/50 dark:border-indigo-900/40 transition-all active:scale-95 shadow-sm cursor-pointer"
+                  title="Add Activity"
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
@@ -628,8 +817,8 @@ export default function CustomerDetailPage() {
                       >
                         <span className="text-base shrink-0">📅</span>
                         <div>
-                          <div className="font-bold text-slate-900 dark:text-white">นัดวางแผนการเงิน (อัปเดต)</div>
-                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log financial planning session</div>
+                          <div className="font-bold text-slate-900 dark:text-white">นัดวางแผน (อัปเดต)</div>
+                          <div className="text-[10px] text-slate-400 dark:text-slate-500">Log planning update meeting</div>
                         </div>
                       </button>
                     </div>
@@ -717,7 +906,7 @@ export default function CustomerDetailPage() {
                 <Phone className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
                 <div className="text-xs">
                   <span className="block text-slate-400">Phone</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{customer.phone || '—'}</span>
+                  <span className="font-semibold text-slate-880 dark:text-slate-200">{customer.phone || '—'}</span>
                 </div>
               </div>
 
@@ -725,7 +914,7 @@ export default function CustomerDetailPage() {
                 <Mail className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
                 <div className="text-xs">
                   <span className="block text-slate-400">Email</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block max-w-[200px]">{customer.email || '—'}</span>
+                  <span className="font-semibold text-slate-880 dark:text-slate-200 truncate block max-w-[200px]">{customer.email || '—'}</span>
                 </div>
               </div>
 
@@ -733,7 +922,7 @@ export default function CustomerDetailPage() {
                 <MessageCircle className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
                 <div className="text-xs">
                   <span className="block text-slate-400">Line ID</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{customer.line_id || '—'}</span>
+                  <span className="font-semibold text-slate-880 dark:text-slate-200">{customer.line_id || '—'}</span>
                 </div>
               </div>
 
@@ -741,7 +930,7 @@ export default function CustomerDetailPage() {
                 <Calendar className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
                 <div className="text-xs">
                   <span className="block text-slate-400">Birth Date</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{customer.birth_date || '—'}</span>
+                  <span className="font-semibold text-slate-880 dark:text-slate-200">{customer.birth_date || '—'}</span>
                 </div>
               </div>
 
@@ -755,11 +944,11 @@ export default function CustomerDetailPage() {
             </div>
           </div>
 
-          {/* AI Relationship Assistant (ผู้ช่วยวิเคราะห์ข้อมูลลูกค้า) */}
+          {/* AI Relationship Assistant */}
           <div className="bg-gradient-to-br from-indigo-500/[0.03] to-purple-500/[0.03] dark:from-indigo-950/10 dark:to-purple-950/10 border border-indigo-150/80 dark:border-indigo-900/30 rounded-3xl p-6 shadow-sm space-y-5">
             <div className="flex flex-col gap-3 justify-between">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-650 dark:text-indigo-400">
+                <div className="p-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-655 dark:text-indigo-400">
                   <Sparkles className="h-5 w-5 drop-shadow-[0_0_4px_rgba(99,102,241,0.4)]" />
                 </div>
                 <div>
@@ -772,32 +961,34 @@ export default function CustomerDetailPage() {
                 </div>
               </div>
               
-              <button
-                onClick={handleGenerateAI}
-                disabled={isAnalyzing}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
-              >
-                {isAnalyzing ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>กำลังวิเคราะห์...</span>
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    <span>{customer.ai_last_generated_at ? 'วิเคราะห์ใหม่' : 'เริ่มวิเคราะห์ด้วย AI'}</span>
-                  </>
-                )}
-              </button>
+              {!customer.ai_last_generated_at && (
+                <button
+                  onClick={handleGenerateAI}
+                  disabled={isAnalyzing}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>กำลังวิเคราะห์...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>เริ่มวิเคราะห์ด้วย AI</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {!customer.ai_last_generated_at ? (
               <div className="text-center py-6 px-4 bg-white/50 dark:bg-slate-900/40 rounded-2xl border border-dashed border-indigo-100 dark:border-indigo-900/20 space-y-3">
                 <Sparkles className="h-8 w-8 text-indigo-400/80 mx-auto animate-pulse" />
                 <div className="space-y-1">
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">ยังไม่ได้เปิดใช้งานการวิเคราะห์ข้อมูลความสัมพันธ์</h4>
+                  <h4 className="text-xs font-bold text-slate-880 dark:text-slate-200">ยังไม่ได้เปิดใช้งานการวิเคราะห์ข้อมูลความสัมพันธ์</h4>
                   <p className="text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
-                    ใช้ AI ประเมินประวัติ ความต้องการความคุ้มครอง และความเสี่ยงในการจ่ายเบี้ย เพื่อรับคำแนะนำระดับ สรุปพฤติกรรม และร่างข้อความสำหรับติตตามลูกค้าทันที
+                    ใช้ AI ประเมินประวัติ ความต้องการความคุ้มครอง และความเสี่ยงในการจ่ายเบี้ย เพื่อรับคำแนะนำระดับ สรุปพฤติกรรม และร่างข้อความสำหรับติดตามลูกค้าทันที
                   </p>
                 </div>
                 <button
@@ -845,7 +1036,7 @@ export default function CustomerDetailPage() {
                               {levelsList.find(l => l.id === customer.ai_suggested_level_id)?.name || 'Unknown'}
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-455 leading-relaxed font-medium">
+                          <p className="text-[11px] text-slate-505 dark:text-slate-455 leading-relaxed font-medium">
                             {customer.ai_suggested_level_reason}
                           </p>
                         </div>
@@ -861,7 +1052,7 @@ export default function CustomerDetailPage() {
                       </div>
                     ) : (
                       <div className="p-3.5 bg-emerald-500/5 dark:bg-emerald-950/10 border border-emerald-100/50 dark:border-emerald-900/20 rounded-2xl flex items-center gap-2 shadow-sm">
-                        <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-450 shrink-0" />
+                        <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-455 shrink-0" />
                         <p className="text-[11px] text-emerald-800 dark:text-emerald-400 font-medium">
                           ระดับปัจจุบันตรงตามคำแนะนำของ AI แล้ว ({levelsList.find(l => l.id === customer.customer_level_id)?.name})
                         </p>
@@ -990,14 +1181,14 @@ export default function CustomerDetailPage() {
                         >
                           {policy.company}
                         </span>
-                        <span className="font-mono text-xs font-bold text-slate-850 dark:text-slate-200">
+                        <span className="font-mono text-xs font-bold text-slate-855 dark:text-slate-200">
                           {policy.policy_number}
                         </span>
                       </div>
                       <span className="block text-xs font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[180px]">
                         {policy.plan_name || 'Unnamed Plan'}
                       </span>
-                      <div className="flex gap-2 text-[10px] text-slate-500">
+                      <div className="flex gap-2 text-[10px] text-slate-505">
                         <span>Premium: ฿{policy.premium_amount?.toLocaleString()}</span>
                         <span>•</span>
                         <span>Due: {policy.next_premium_due_date || '—'}</span>
@@ -1019,7 +1210,7 @@ export default function CustomerDetailPage() {
               <button
                 onClick={saveNote}
                 disabled={isSavingNote}
-                className="flex items-center gap-1 text-xs font-bold text-indigo-650 hover:text-indigo-500 disabled:opacity-50"
+                className="flex items-center gap-1 text-xs font-bold text-indigo-655 hover:text-indigo-500 disabled:opacity-50"
               >
                 {isSavingNote ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save
@@ -1053,7 +1244,7 @@ export default function CustomerDetailPage() {
               onClick={() => scrollToSection('activities-section')}
               className="p-4 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 flex items-center gap-3 text-left w-full hover:border-indigo-400 dark:hover:border-indigo-800 hover:shadow-xs active:scale-98 transition-all cursor-pointer"
             >
-              <div className="h-9 w-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-450 flex items-center justify-center shrink-0">
+              <div className="h-9 w-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-455 flex items-center justify-center shrink-0">
                 <Shield className="h-4.5 w-4.5" />
               </div>
               <div className="text-xs">
@@ -1078,98 +1269,254 @@ export default function CustomerDetailPage() {
 
           {/* Reminders List Section */}
           <div id="reminders-section" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4 scroll-mt-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                 Reminders & Follow-Ups (งานที่ต้องติดตาม)
               </h3>
-              <Link
-                href={`/reminders/new?customerId=${id}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-650 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm"
-              >
-                <Plus className="h-3.5 w-3.5" /> Add Reminder
-              </Link>
+              
+              <div className="flex items-center gap-3 self-end sm:self-auto">
+                {/* Segmented Control Switch */}
+                <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl text-[10px] font-bold shadow-xs">
+                  <button
+                    onClick={() => setReminderTab('pending')}
+                    className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                      reminderTab === 'pending'
+                        ? 'bg-white dark:bg-slate-900 text-indigo-650 dark:text-indigo-405 shadow-xs'
+                        : 'text-slate-450 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    Pending ({pendingReminders.length})
+                  </button>
+                  <button
+                    onClick={() => setReminderTab('completed')}
+                    className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                      reminderTab === 'completed'
+                        ? 'bg-white dark:bg-slate-900 text-indigo-650 dark:text-indigo-405 shadow-xs'
+                        : 'text-slate-450 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    Completed ({completedReminders.length})
+                  </button>
+                </div>
+
+                <Link
+                  href={`/reminders/new?customerId=${id}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-655 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add Reminder
+                </Link>
+              </div>
             </div>
 
-            {pendingReminders.length === 0 ? (
-              <div className="text-center py-6 border border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
-                <Bell className="h-6 w-6 text-slate-300 mx-auto mb-1.5" />
-                <p className="text-[11px] text-slate-500">No pending reminders for this customer.</p>
-              </div>
-            ) : (
-              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
-                {pendingReminders.map((rem) => {
-                  const isOverdue = rem.due_date < todayStr
-                  return (
-                    <div
-                      key={rem.id}
-                      className={`p-3.5 rounded-2xl border flex items-center justify-between gap-4 text-xs transition-colors ${
-                        isOverdue
-                          ? 'bg-rose-50/40 border-rose-100 dark:bg-rose-950/10 dark:border-rose-900/30'
-                          : rem.status === 'snoozed'
-                          ? 'bg-amber-50/30 border-amber-100 dark:bg-amber-950/10 dark:border-amber-900/20'
-                          : 'bg-slate-50/50 border-slate-100 dark:bg-slate-900/30'
-                      }`}
-                    >
-                      <div className="space-y-1 select-none">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase ${
-                              rem.priority === 'urgent' || rem.priority === 'high'
-                                ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400'
-                                : 'bg-slate-100 text-slate-650 dark:bg-slate-800 dark:text-slate-400'
-                            }`}
-                          >
-                            {rem.priority}
-                          </span>
-                          <span className="font-bold text-slate-800 dark:text-slate-200">
-                            {rem.title}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 leading-normal max-w-[400px]">
-                          {rem.description || 'No description provided.'}
-                        </p>
-                        <div className="flex gap-2 text-[10px] text-slate-400 font-medium">
-                          <span className={isOverdue ? 'text-rose-600 dark:text-rose-455 font-bold' : ''}>
-                            Due: {rem.due_date} {isOverdue && '(Overdue)'}
-                          </span>
-                          {rem.next_action_date && (
-                            <span>• Next action: {rem.next_action_date}</span>
-                          )}
-                          {rem.google_sync_enabled && (
-                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold border inline-block ml-1.5 ${
-                              rem.google_sync_status === 'synced'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-150 dark:bg-emerald-950/20 dark:text-emerald-455 dark:border-transparent'
-                                : rem.google_sync_status === 'failed'
-                                ? 'bg-rose-50 text-rose-700 border-rose-150 dark:bg-rose-950/20 dark:text-rose-455 dark:border-transparent'
-                                : 'bg-slate-50 text-slate-650 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-transparent'
-                            }`}>
-                              {rem.google_sync_status === 'synced' ? 'GCal Synced' : rem.google_sync_status === 'failed' ? 'GCal Failed' : 'GCal Pending'}
+            {(() => {
+              const activeList = reminderTab === 'pending' ? pendingReminders : completedReminders
+              const noItemsText = reminderTab === 'pending'
+                ? 'No pending reminders for this customer.'
+                : 'No completed reminders for this customer.'
+
+              if (activeList.length === 0) {
+                return (
+                  <div className="text-center py-8 border border-dashed border-slate-100 dark:border-slate-800 rounded-2xl">
+                    <Bell className="h-6 w-6 text-slate-300 mx-auto mb-1.5" />
+                    <p className="text-[11px] text-slate-500">{noItemsText}</p>
+                  </div>
+                )
+              }
+
+              const swipeableItems = activeList.map((rem) => {
+                const isOverdue = rem.status !== 'done' && rem.due_date < todayStr
+                const badge = getDaysBadge(rem.due_date)
+                
+                const leftActions: SwipeAction[] = isTouchDevice ? [
+                  rem.status === 'done' ? {
+                    id: 'pending',
+                    label: 'Undo',
+                    icon: <RotateCcw className="h-4 w-4" />,
+                    tone: 'neutral'
+                  } : {
+                    id: 'done',
+                    label: 'Done',
+                    icon: <Check className="h-4 w-4" />,
+                    tone: 'success'
+                  }
+                ] : []
+
+                const rightActions: SwipeAction[] = isTouchDevice ? [
+                  {
+                    id: 'edit',
+                    label: 'Edit',
+                    icon: <Edit2 className="h-4 w-4" />,
+                    tone: 'primary'
+                  }
+                ] : []
+
+                const itemClass = rem.status === 'done'
+                  ? 'bg-emerald-500/[0.02] border-emerald-100/50 dark:bg-emerald-950/[0.03] dark:border-emerald-900/10 text-slate-450 dark:text-slate-500 shadow-none'
+                  : isOverdue
+                  ? 'bg-rose-50/40 border-rose-100 dark:bg-rose-950/10 dark:border-rose-900/30'
+                  : rem.status === 'snoozed'
+                  ? 'bg-amber-50/30 border-amber-100 dark:bg-amber-950/10 dark:border-amber-900/20'
+                  : 'bg-slate-50/50 border-slate-100 dark:bg-slate-900/30'
+
+                return {
+                  id: rem.id,
+                  leftActions,
+                  rightActions,
+                  className: itemClass,
+                  content: (
+                    <div className="flex items-center justify-between gap-4 w-full select-none">
+                      <div className="flex items-center gap-3.5 flex-1 min-w-0">
+                        {rem.status !== 'done' && (
+                          <div className={`flex flex-col items-center justify-center shrink-0 w-16 h-12 rounded-2xl border text-center font-sans shadow-xs ${badge.style}`}>
+                            <span className="text-[13px] font-extrabold leading-none tracking-tight">
+                              {badge.value}
                             </span>
-                          )}
+                            <span className="text-[7px] font-bold uppercase tracking-wider mt-0.5 leading-none font-medium">
+                              {badge.label}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="space-y-1 select-none flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase ${
+                                rem.status === 'done'
+                                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+                                  : rem.priority === 'urgent' || rem.priority === 'high'
+                                  ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400'
+                                  : 'bg-slate-105 text-slate-655 dark:bg-slate-800 dark:text-slate-400'
+                              }`}
+                            >
+                              {rem.status === 'done' ? 'done' : rem.priority}
+                            </span>
+                            <span className={`font-bold text-slate-855 dark:text-slate-200 ${rem.status === 'done' ? 'line-through text-slate-450 dark:text-slate-500' : ''}`}>
+                              {rem.title}
+                            </span>
+                          </div>
+                          <p className={`text-[11px] text-slate-500 leading-normal max-w-[400px] ${rem.status === 'done' ? 'line-through text-slate-400/80 dark:text-slate-655' : ''}`}>
+                            {rem.description || 'No description provided.'}
+                          </p>
+                          <div className="flex gap-2 text-[10px] text-slate-400 font-medium">
+                            {rem.status === 'done' ? (
+                              <span className="text-emerald-600 dark:text-emerald-455 font-semibold">
+                                Completed: {rem.completed_at ? new Date(rem.completed_at).toLocaleDateString('th-TH') : rem.due_date}
+                              </span>
+                            ) : (
+                              <span className={isOverdue ? 'text-rose-600 dark:text-rose-455 font-bold' : ''}>
+                                Due: {rem.due_date} {isOverdue && '(Overdue)'}
+                              </span>
+                            )}
+                            {rem.next_action_date && rem.status !== 'done' && (
+                              <span>• Next action: {rem.next_action_date}</span>
+                            )}
+                            {rem.google_sync_enabled && (
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold border inline-block ml-1.5 ${
+                                rem.google_sync_status === 'synced'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-150 dark:bg-emerald-950/20 dark:text-emerald-455 dark:border-transparent'
+                                  : rem.google_sync_status === 'failed'
+                                  ? 'bg-rose-50 text-rose-700 border-rose-150 dark:bg-rose-950/20 dark:text-rose-455 dark:border-transparent'
+                                  : 'bg-slate-50 text-slate-655 border-slate-205 dark:bg-slate-800 dark:text-slate-400 dark:border-transparent'
+                              }`}>
+                                {rem.google_sync_status === 'synced' ? 'GCal Synced' : rem.google_sync_status === 'failed' ? 'GCal Failed' : 'GCal Pending'}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => handleReminderAction(rem.id, 'done')}
-                          className="p-1.5 rounded-lg text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100 hover:text-emerald-700 transition-colors"
-                          title="Mark Done"
-                        >
-                          <CheckCircle className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setActiveReminder(rem)}
-                          className="p-1.5 rounded-lg text-slate-500 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 hover:text-slate-700 transition-colors"
-                          title="Edit / Snooze"
-                        >
-                          <Edit2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                      {/* Desktop Direct Actions (Non-touch) */}
+                      {!isTouchDevice && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {rem.status === 'done' ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleReminderAction(rem.id, 'pending')
+                              }}
+                              className="p-1.5 rounded-lg text-emerald-605 bg-emerald-50 dark:bg-emerald-950/20 hover:bg-slate-105 dark:hover:bg-slate-800 transition-colors flex items-center justify-center cursor-pointer"
+                              title="Mark Pending"
+                            >
+                              <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400 fill-emerald-600/20" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleReminderAction(rem.id, 'done')
+                              }}
+                              className="p-1.5 rounded-lg text-emerald-606 bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100 hover:text-emerald-700 transition-colors cursor-pointer"
+                              title="Mark Done"
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (rem.id.startsWith('activity-')) {
+                                const act = activities.find(a => a.id === rem.source_id)
+                                if (act) {
+                                  setSelectedActivity(act)
+                                  setShowActivityForm(true)
+                                }
+                              } else if (rem.id.startsWith('gift-')) {
+                                const g = gifts.find(gift => gift.id === rem.source_id)
+                                if (g) {
+                                  setSelectedGift(g)
+                                  setShowGiftForm(true)
+                                }
+                              } else {
+                                setActiveReminder(rem)
+                              }
+                            }}
+                            className="p-1.5 rounded-lg text-slate-500 bg-slate-105 dark:bg-slate-800 hover:bg-slate-200 hover:text-slate-700 transition-colors cursor-pointer"
+                            title="Edit / Snooze"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )
-                })}
-              </div>
-            )}
+                }
+              })
+
+              return (
+                <div className="max-h-[380px] overflow-y-auto pr-1">
+                  <SwipeableList
+                    items={swipeableItems}
+                    dragDisabled={!isTouchDevice}
+                    onAction={({ item, action }) => {
+                      if (action.id === 'done') {
+                        handleReminderAction(item.id, 'done')
+                      } else if (action.id === 'pending') {
+                        handleReminderAction(item.id, 'pending')
+                      } else if (action.id === 'edit') {
+                        if (item.id.startsWith('activity-')) {
+                          const act = activities.find(a => a.id === item.id.replace('activity-', ''))
+                          if (act) {
+                            setSelectedActivity(act)
+                            setShowActivityForm(true)
+                          }
+                        } else if (item.id.startsWith('gift-')) {
+                          const g = gifts.find(gift => gift.id === item.id.replace('gift-', ''))
+                          if (g) {
+                            setSelectedGift(g)
+                            setShowGiftForm(true)
+                          }
+                        } else {
+                          const rem = reminders.find(r => r.id === item.id)
+                          if (rem) {
+                            setActiveReminder(rem)
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </div>
+              )
+            })()}
           </div>
 
           {/* Double Column for Activities and Gifts logs */}
@@ -1188,7 +1535,7 @@ export default function CustomerDetailPage() {
                     setDefaultActivitySummary(undefined)
                     setShowActivityForm(true)
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-650 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-655 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
                 >
                   <Plus className="h-3.5 w-3.5" /> Log
                 </button>
@@ -1200,8 +1547,8 @@ export default function CustomerDetailPage() {
                   <p className="text-xs text-slate-500">No activities logged yet.</p>
                 </div>
               ) : (
-                <div className="relative pl-4 border-l border-slate-100 dark:border-slate-800 space-y-4 py-2">
-                  {activities.map((act) => {
+                (() => {
+                  const activitySwipeableItems = activities.map((act) => {
                     const dateStr = new Date(act.activity_date).toLocaleDateString('th-TH', {
                       day: 'numeric',
                       month: 'short',
@@ -1210,61 +1557,116 @@ export default function CustomerDetailPage() {
                       minute: '2-digit'
                     })
 
-                    return (
-                      <div key={act.id} className="relative group text-xs space-y-1">
-                        {/* Circle Bullet */}
-                        <div
-                          className={`absolute -left-[25px] top-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full border text-[9px] ${getActivityColor(
-                            act.activity_type
-                          )}`}
-                        >
-                          {getActivityIcon(act.activity_type)}
-                        </div>
+                    const leftActions: SwipeAction[] = isTouchDevice ? [
+                      {
+                        id: 'edit',
+                        label: 'Edit',
+                        icon: <Edit2 className="h-4 w-4" />,
+                        tone: 'primary'
+                      }
+                    ] : []
 
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-slate-855 dark:text-slate-200 capitalize">
-                            {act.activity_type.replace('_', ' ')}
-                          </span>
-                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
-                            <button
-                              onClick={() => {
-                                setSelectedActivity(act)
-                                setShowActivityForm(true)
-                              }}
-                              className="text-slate-400 hover:text-indigo-650"
+                    const rightActions: SwipeAction[] = isTouchDevice ? [
+                      {
+                        id: 'delete',
+                        label: 'Delete',
+                        icon: <Trash2 className="h-4 w-4" />,
+                        tone: 'danger'
+                      }
+                    ] : []
+
+                    return {
+                      id: act.id,
+                      leftActions,
+                      rightActions,
+                      className: 'bg-slate-50/50 border-slate-100 dark:bg-slate-900/30',
+                      content: (
+                        <div className="flex items-center justify-between gap-4 w-full select-none">
+                          <div className="relative text-xs space-y-1 w-full pl-6 select-none">
+                            {/* Circle Bullet */}
+                            <div
+                              className={`absolute left-0 top-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full border text-[9px] ${getActivityColor(
+                                act.activity_type
+                              )}`}
                             >
-                              <Edit2 className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteActivity(act.id)}
-                              className="text-slate-400 hover:text-red-650"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
+                              {getActivityIcon(act.activity_type)}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-slate-855 dark:text-slate-200 capitalize">
+                                {act.activity_type.replace('_', ' ')}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium">{dateStr}</span>
+                            </div>
+                            
+                            {act.summary && (
+                              <p className="text-slate-655 dark:text-slate-300 leading-normal pl-0.5 mt-0.5 font-medium font-sans">
+                                {act.summary}
+                              </p>
+                            )}
+                            {act.result && (
+                              <p className="text-emerald-600 dark:text-emerald-450 leading-normal pl-0.5 text-[11px] font-semibold">
+                                Result: {act.result}
+                              </p>
+                            )}
+                            {act.status_after_activity && (
+                              <span className="inline-block mt-0.5 px-2 py-0.5 bg-slate-105 dark:bg-slate-850 rounded text-[9px] font-bold text-slate-500">
+                                {act.status_after_activity}
+                              </span>
+                            )}
                           </div>
+
+                          {/* Desktop Direct Actions (Non-touch) */}
+                          {!isTouchDevice && (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedActivity(act)
+                                  setShowActivityForm(true)
+                                }}
+                                className="p-1.5 rounded-lg text-slate-500 bg-slate-105 dark:bg-slate-800 hover:bg-slate-200 hover:text-slate-700 transition-colors cursor-pointer"
+                                title="Edit"
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleDeleteActivity(act.id)
+                                }}
+                                className="p-1.5 rounded-lg text-rose-600 bg-rose-50 dark:bg-rose-950/20 hover:bg-rose-100 hover:text-rose-750 transition-colors cursor-pointer"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        
-                        <span className="block text-[10px] text-slate-400">{dateStr}</span>
-                        
-                        {act.summary && (
-                          <p className="text-slate-655 dark:text-slate-300 leading-normal pl-0.5 mt-0.5 font-medium">
-                            {act.summary}
-                          </p>
-                        )}
-                        {act.result && (
-                          <p className="text-emerald-600 dark:text-emerald-450 leading-normal pl-0.5 text-[11px] font-semibold">
-                            Result: {act.result}
-                          </p>
-                        )}
-                        {act.status_after_activity && (
-                          <span className="inline-block mt-0.5 px-2 py-0.5 bg-slate-100 dark:bg-slate-850 rounded text-[9px] font-bold text-slate-500">
-                            {act.status_after_activity}
-                          </span>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    }
+                  })
+
+                  return (
+                    <div className="max-h-[380px] overflow-y-auto pr-1">
+                      <SwipeableList
+                        items={activitySwipeableItems}
+                        dragDisabled={!isTouchDevice}
+                        onAction={({ item, action }) => {
+                          if (action.id === 'edit') {
+                            const act = activities.find(a => a.id === item.id)
+                            if (act) {
+                              setSelectedActivity(act)
+                              setShowActivityForm(true)
+                            }
+                          } else if (action.id === 'delete') {
+                            handleDeleteActivity(item.id)
+                          }
+                        }}
+                      />
+                    </div>
+                  )
+                })()
               )}
             </div>
 
@@ -1279,7 +1681,7 @@ export default function CustomerDetailPage() {
                     setSelectedGift(null)
                     setShowGiftForm(true)
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-650 dark:text-indigo-400 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-650 dark:text-indigo-405 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
                 >
                   <Plus className="h-3.5 w-3.5" /> Record
                 </button>
@@ -1291,59 +1693,110 @@ export default function CustomerDetailPage() {
                   <p className="text-xs text-slate-500">No gifts recorded yet.</p>
                 </div>
               ) : (
-                <div className="space-y-2.5">
-                  {gifts.map((g) => {
+                (() => {
+                  const giftSwipeableItems = gifts.map((g) => {
                     const dateStr = new Date(g.gift_date).toLocaleDateString('th-TH', {
                       day: 'numeric',
                       month: 'short',
                       year: '2-digit'
                     })
 
-                    return (
-                      <div
-                        key={g.id}
-                        className="p-3 bg-slate-50/50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4 text-xs group"
-                      >
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-800 dark:text-slate-200">
-                              {g.gift_name}
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {dateStr}
-                            </span>
-                          </div>
-                          {g.note && (
-                            <p className="text-[11px] text-slate-500">{g.note}</p>
-                          )}
-                        </div>
+                    const leftActions: SwipeAction[] = isTouchDevice ? [
+                      {
+                        id: 'edit',
+                        label: 'Edit',
+                        icon: <Edit2 className="h-4 w-4" />,
+                        tone: 'primary'
+                      }
+                    ] : []
 
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="font-bold text-indigo-650 dark:text-indigo-400">
-                            ฿{g.gift_cost?.toLocaleString()}
-                          </span>
-                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
-                            <button
-                              onClick={() => {
-                                setSelectedGift(g)
-                                setShowGiftForm(true)
-                              }}
-                              className="text-slate-400 hover:text-indigo-650"
-                            >
-                              <Edit2 className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteGift(g.id)}
-                              className="text-slate-400 hover:text-red-650"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
+                    const rightActions: SwipeAction[] = isTouchDevice ? [
+                      {
+                        id: 'delete',
+                        label: 'Delete',
+                        icon: <Trash2 className="h-4 w-4" />,
+                        tone: 'danger'
+                      }
+                    ] : []
+
+                    return {
+                      id: g.id,
+                      leftActions,
+                      rightActions,
+                      className: 'bg-slate-50/50 border-slate-100 dark:bg-slate-900/30',
+                      content: (
+                        <div className="flex items-center justify-between gap-4 text-xs w-full select-none">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-880 dark:text-slate-200">
+                                {g.gift_name}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium">
+                                {dateStr}
+                              </span>
+                            </div>
+                            {g.note && (
+                              <p className="text-[11px] text-slate-505">{g.note}</p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="font-bold text-indigo-650 dark:text-indigo-400">
+                              ฿{g.gift_cost?.toLocaleString()}
+                            </span>
+                            
+                            {/* Desktop Direct Actions (Non-touch) */}
+                            {!isTouchDevice && (
+                              <div className="flex items-center gap-1.5 pl-3 border-l border-slate-200 dark:border-slate-800">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedGift(g)
+                                    setShowGiftForm(true)
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-500 bg-slate-105 dark:bg-slate-800 hover:bg-slate-200 hover:text-slate-700 transition-colors cursor-pointer"
+                                  title="Edit"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleDeleteGift(g.id)
+                                  }}
+                                  className="p-1.5 rounded-lg text-rose-600 bg-rose-50 dark:bg-rose-950/20 hover:bg-rose-100 hover:text-rose-750 transition-colors cursor-pointer"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    }
+                  })
+
+                  return (
+                    <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                      <SwipeableList
+                        items={giftSwipeableItems}
+                        dragDisabled={!isTouchDevice}
+                        onAction={({ item, action }) => {
+                          if (action.id === 'edit') {
+                            const g = gifts.find(gift => gift.id === item.id)
+                            if (g) {
+                              setSelectedGift(g)
+                              setShowGiftForm(true)
+                            }
+                          } else if (action.id === 'delete') {
+                            handleDeleteGift(item.id)
+                          }
+                        }}
+                      />
+                    </div>
+                  )
+                })()
               )}
             </div>
           </div>
@@ -1360,7 +1813,7 @@ export default function CustomerDetailPage() {
             </div>
             <div className="space-y-2">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Customer</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
+              <p className="text-xs text-slate-550 leading-relaxed">
                 Are you sure you want to delete <strong>{customer.full_name}</strong>? This will permanently delete all policies and notes, and cannot be undone.
               </p>
             </div>

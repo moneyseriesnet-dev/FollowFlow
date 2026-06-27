@@ -9,9 +9,18 @@ interface ActivityFormProps {
   activity?: any // If provided, we are in Edit mode
   onClose: () => void
   onSaved: () => void
+  defaultType?: string
+  defaultSummary?: string
 }
 
-export default function ActivityForm({ customerId, activity, onClose, onSaved }: ActivityFormProps) {
+export default function ActivityForm({ 
+  customerId, 
+  activity, 
+  onClose, 
+  onSaved, 
+  defaultType, 
+  defaultSummary 
+}: ActivityFormProps) {
   const supabase = createClient() as any
   const [loading, setLoading] = useState(false)
   const [fetchingOptions, setFetchingOptions] = useState(true)
@@ -21,7 +30,7 @@ export default function ActivityForm({ customerId, activity, onClose, onSaved }:
   const [reminders, setReminders] = useState<any[]>([])
 
   // Form Fields
-  const [activityType, setActivityType] = useState(activity?.activity_type || 'phone_call')
+  const [activityType, setActivityType] = useState(activity?.activity_type || defaultType || 'phone_call')
   const [activityDate, setActivityDate] = useState(() => {
     if (activity?.activity_date) {
       // Convert to YYYY-MM-DDTHH:MM for datetime-local
@@ -37,7 +46,7 @@ export default function ActivityForm({ customerId, activity, onClose, onSaved }:
   })
   const [policyId, setPolicyId] = useState(activity?.policy_id || '')
   const [reminderId, setReminderId] = useState(activity?.reminder_id || '')
-  const [summary, setSummary] = useState(activity?.summary || '')
+  const [summary, setSummary] = useState(activity?.summary || defaultSummary || '')
   const [result, setResult] = useState(activity?.result || '')
   const [statusAfterActivity, setStatusAfterActivity] = useState(activity?.status_after_activity || '')
   const [nextActionDate, setNextActionDate] = useState(activity?.next_action_date || '')
@@ -90,7 +99,7 @@ export default function ActivityForm({ customerId, activity, onClose, onSaved }:
         throw new Error('User not authenticated. Please log in again.')
       }
 
-      const payload = {
+      const payload: any = {
         owner_id: user.id,
         customer_id: customerId,
         policy_id: policyId || null,
@@ -105,6 +114,11 @@ export default function ActivityForm({ customerId, activity, onClose, onSaved }:
       }
 
       if (activity?.id) {
+        // Reset to pending if the next action date is updated
+        if (activity.next_action_date !== nextActionDate) {
+          payload.next_action_status = 'pending'
+          payload.next_action_completed_at = null
+        }
         // Update mode
         const { error: saveErr } = await supabase
           .from('activities')
@@ -117,6 +131,8 @@ export default function ActivityForm({ customerId, activity, onClose, onSaved }:
           .from('activities')
           .insert({
             ...payload,
+            next_action_status: 'pending',
+            next_action_completed_at: null,
             created_by: user.id,
           })
         if (saveErr) throw saveErr

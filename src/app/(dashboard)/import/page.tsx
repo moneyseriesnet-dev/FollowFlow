@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import {
   Camera,
   Upload,
-  CheckCircle2,
   XCircle,
   Edit3,
   Loader2,
@@ -14,13 +13,18 @@ import {
   Sparkles,
   Check,
   X,
-  Plus
+  FileText,
+  Image as ImageIcon,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { DraftRow, ImportStep } from '@/lib/ocr/types'
+
+type ImportMode = 'image' | 'text'
 
 export default function ImportPage() {
   const router = useRouter()
   const [step, setStep] = useState<ImportStep>('upload')
+  const [importMode, setImportMode] = useState<ImportMode>('image')
   const [sourceCompany, setSourceCompany] = useState<'AXA' | 'AIA' | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
@@ -54,20 +58,44 @@ export default function ImportPage() {
   }, [step])
 
   // Handlers for Upload Step
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const selectedFiles = Array.from(e.target.files)
       setFiles((prev) => [...prev, ...selectedFiles])
-      
-      const newPreviews = selectedFiles.map((file) => URL.createObjectURL(file))
-      setPreviews((prev) => [...prev, ...newPreviews])
+
+      if (importMode === 'image') {
+        const newPreviews = selectedFiles.map((file) => URL.createObjectURL(file))
+        setPreviews((prev) => [...prev, ...newPreviews])
+      } else {
+        // For text/CSV files, read a short preview of the content
+        const newPreviews = await Promise.all(
+          selectedFiles.map((file) =>
+            file.text().then((text) => text.slice(0, 600))
+          )
+        )
+        setPreviews((prev) => [...prev, ...newPreviews])
+      }
     }
   }
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index))
-    URL.revokeObjectURL(previews[index])
+    if (importMode === 'image') {
+      URL.revokeObjectURL(previews[index])
+    }
     setPreviews((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const switchMode = (mode: ImportMode) => {
+    // Clear files when switching mode to avoid mixing types
+    if (importMode === 'image') {
+      previews.forEach((p) => URL.revokeObjectURL(p))
+    }
+    setImportMode(mode)
+    setFiles([])
+    setPreviews([])
+    setError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const startUploadAndOcr = async () => {
@@ -187,7 +215,9 @@ export default function ImportPage() {
 
   const resetWizard = () => {
     setStep('upload')
+    setImportMode('image')
     setSourceCompany(null)
+    if (importMode === 'image') previews.forEach((p) => URL.revokeObjectURL(p))
     setFiles([])
     setPreviews([])
     setBatchId(null)
@@ -254,31 +284,71 @@ export default function ImportPage() {
       {step === 'upload' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6">
+
+            {/* Mode Toggle */}
+            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl w-fit">
+              <button
+                onClick={() => switchMode('image')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                  importMode === 'image'
+                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <ImageIcon className="h-4 w-4" />
+                Screenshot / รูปภาพ
+              </button>
+              <button
+                onClick={() => switchMode('text')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                  importMode === 'text'
+                    ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                CSV / Text File
+              </button>
+            </div>
+
             <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Camera className="h-5 w-5 text-indigo-500" />
-              Upload Screenshots (อัปโหลดภาพหน้าจอข้อมูลลูกค้า)
+              {importMode === 'image' ? (
+                <><Camera className="h-5 w-5 text-indigo-500" /> Upload Screenshots (อัปโหลดภาพหน้าจอ)</>)
+                : (
+                <><FileSpreadsheet className="h-5 w-5 text-emerald-500" /> Upload CSV / Text File (อัปโหลดไฟล์ข้อมูล)</>
+              )}
             </h2>
 
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-2xl p-10 flex flex-col items-center justify-center gap-3 cursor-pointer bg-slate-50/50 dark:bg-slate-800/20 transition-all group"
+              className={`border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center gap-3 cursor-pointer bg-slate-50/50 dark:bg-slate-800/20 transition-all group ${
+                importMode === 'image'
+                  ? 'border-slate-200 dark:border-slate-800 hover:border-indigo-500 dark:hover:border-indigo-400'
+                  : 'border-slate-200 dark:border-slate-800 hover:border-emerald-500 dark:hover:border-emerald-400'
+              }`}
             >
               <input
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept="image/*"
+                accept={importMode === 'image' ? 'image/*' : '.csv,.txt,text/csv,text/plain'}
                 multiple
                 className="hidden"
               />
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform">
-                <Upload className="h-6 w-6" />
+              <div className={`flex h-12 w-12 items-center justify-center rounded-xl group-hover:scale-110 transition-transform ${
+                importMode === 'image'
+                  ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400'
+                  : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400'
+              }`}>
+                {importMode === 'image' ? <Upload className="h-6 w-6" /> : <FileText className="h-6 w-6" />}
               </div>
               <div className="text-center">
                 <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                  Click to upload screenshots
+                  {importMode === 'image' ? 'Click to upload screenshots' : 'Click to upload CSV or text file'}
                 </p>
-                <p className="text-xs text-slate-500 mt-1">PNG, JPG or JPEG up to 10MB</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {importMode === 'image' ? 'PNG, JPG or JPEG up to 10MB' : 'CSV, TXT — Gemini AI จะอ่านและแปลงข้อมูลให้อัตโนมัติ'}
+                </p>
               </div>
             </div>
 
@@ -287,22 +357,47 @@ export default function ImportPage() {
                 <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                   Selected Files ({files.length})
                 </p>
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-4">
-                  {previews.map((preview, index) => (
-                    <div key={index} className="relative aspect-video rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 group shadow-sm bg-slate-100">
-                      <img src={preview} alt="preview" className="object-cover w-full h-full" />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          removeFile(index)
-                        }}
-                        className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 hover:bg-red-600 text-white transition-colors"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                {importMode === 'image' ? (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-4">
+                    {previews.map((preview, index) => (
+                      <div key={index} className="relative aspect-video rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 group shadow-sm bg-slate-100">
+                        <img src={preview} alt="preview" className="object-cover w-full h-full" />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeFile(index)
+                          }}
+                          className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 hover:bg-red-600 text-white transition-colors"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {previews.map((preview, index) => (
+                      <div key={index} className="relative rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-4 group">
+                        <div className="flex items-start gap-3">
+                          <FileText className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 truncate">{files[index]?.name}</p>
+                            <pre className="text-[10px] text-slate-500 dark:text-slate-400 whitespace-pre-wrap break-all line-clamp-4 font-mono leading-relaxed">{preview}{preview.length >= 600 ? '\n...' : ''}</pre>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              removeFile(index)
+                            }}
+                            className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700 hover:bg-red-500 hover:text-white text-slate-500 transition-colors shrink-0"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -350,9 +445,13 @@ export default function ImportPage() {
             <button
               onClick={startUploadAndOcr}
               disabled={files.length === 0 || !sourceCompany}
-              className="w-full mt-8 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-400 py-4 px-6 rounded-2xl font-semibold shadow-lg shadow-indigo-600/10 cursor-pointer disabled:cursor-not-allowed transition-all"
+              className={`w-full mt-8 flex items-center justify-center gap-2 text-white disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-400 py-4 px-6 rounded-2xl font-semibold shadow-lg cursor-pointer disabled:cursor-not-allowed transition-all ${
+                importMode === 'image'
+                  ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/10'
+                  : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/10'
+              }`}
             >
-              Start OCR Processing
+              {importMode === 'image' ? 'Start OCR Processing' : 'Start CSV Parsing'}
               <ArrowRight className="h-5 w-5" />
             </button>
           </div>
@@ -368,9 +467,13 @@ export default function ImportPage() {
             </div>
           </div>
           <div className="space-y-2">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Analyze screenshot</h2>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+              {importMode === 'image' ? 'Analyze screenshot' : 'Parsing CSV / Text file'}
+            </h2>
             <p className="text-sm text-slate-500 leading-relaxed">
-              ระบบกำลังประมวลผลข้อมูลด้วย AI OCR เพื่อดึงชื่อลูกค้า เลขกรมธรรม์ แผนประกัน กำหนดชำระเบี้ย และวันครบกำหนดจากไฟล์ของคุณ ขั้นตอนนี้อาจใช้เวลาสักครู่
+              {importMode === 'image'
+                ? 'ระบบกำลังประมวลผลข้อมูลด้วย AI OCR เพื่อดึงชื่อลูกค้า เลขกรมธรรม์ แผนประกัน กำหนดชำระเบี้ย และวันครบกำหนดจากไฟล์ของคุณ ขั้นตอนนี้อาจใช้เวลาสักครู่'
+                : 'Gemini AI กำลังอ่านและแปลงข้อมูลจากไฟล์ CSV / Text ของคุณ เพื่อดึงชื่อลูกค้า เลขกรมธรรม์ แผนประกัน กำหนดชำระเบี้ย และวันครบกำหนด ขั้นตอนนี้อาจใช้เวลาสักครู่'}
             </p>
             <p className="text-xs text-rose-500 dark:text-rose-400 font-semibold mt-2 animate-pulse">
               ⚠️ ห้ามปิดหน้านี้หรือรีเฟรช (Refresh) หน้าเว็บในขณะที่ระบบกำลังประมวลผล
