@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           activity_date: string
           activity_type: string
+          amount_paid: number | null
           created_at: string | null
           created_by: string | null
           customer_id: string
@@ -37,6 +38,7 @@ export type Database = {
         Insert: {
           activity_date?: string
           activity_type: string
+          amount_paid?: number | null
           created_at?: string | null
           created_by?: string | null
           customer_id: string
@@ -56,6 +58,7 @@ export type Database = {
         Update: {
           activity_date?: string
           activity_type?: string
+          amount_paid?: number | null
           created_at?: string | null
           created_by?: string | null
           customer_id?: string

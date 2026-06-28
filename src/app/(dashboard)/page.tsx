@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { scanAndGenerateAllReminders, rolloverPolicyCycle } from '@/lib/reminders/reminder-service'
+import { scanAndGenerateAllReminders, rolloverPolicyCycle, completePremiumReminderWithPayment } from '@/lib/reminders/reminder-service'
+import PremiumPaymentModal from '@/components/reminders/premium-payment-modal'
 import {
   Users,
   FileText,
@@ -57,6 +58,9 @@ export default function DashboardPage() {
   const [isScanning, setIsScanning] = useState(false)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<'all' | 'premium' | 'birthday' | 'appointment'>('all')
+
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+  const [paymentReminder, setPaymentReminder] = useState<PriorityActionItem | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -451,19 +455,20 @@ export default function DashboardPage() {
   const handleMarkDone = async (item: PriorityActionItem) => {
     if (item.type !== 'reminder') return
     
+    const rem = item.rawItem
+    if (rem.reminder_type === 'premium_due' && rem.policy_id) {
+      setPaymentReminder(item)
+      setPaymentModalOpen(true)
+      return
+    }
+
     setProcessingId(item.id)
     try {
-      const rem = item.rawItem
-      if (rem.reminder_type === 'premium_due' && rem.policy_id) {
-        // Roll over policy premium cycle
-        await rolloverPolicyCycle(supabase, rem.policy_id, rem.id)
-      } else {
-        // Simple update status to done
-        await supabase
-          .from('reminders')
-          .update({ status: 'done', completed_at: new Date().toISOString() })
-          .eq('id', rem.id)
-      }
+      // Simple update status to done
+      await supabase
+        .from('reminders')
+        .update({ status: 'done', completed_at: new Date().toISOString() })
+        .eq('id', rem.id)
 
       // Trigger Google Calendar Sync
       await fetch('/api/calendar/sync', {
@@ -479,6 +484,38 @@ export default function DashboardPage() {
       console.error('Error resolving action item:', err)
     } finally {
       setProcessingId(null)
+    }
+  }
+
+  const handleConfirmPayment = async (amountPaid: number, paymentDate: string) => {
+    if (!paymentReminder || !paymentReminder.rawItem) return
+    const rem = paymentReminder.rawItem
+    setProcessingId(paymentReminder.id)
+    try {
+      await completePremiumReminderWithPayment(supabase, {
+        policyId: rem.policy_id,
+        reminderId: rem.id,
+        customerId: rem.customer_id,
+        amountPaid: amountPaid,
+        paymentDate: paymentDate,
+      })
+
+      // Trigger Google Calendar Sync
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: rem.id }),
+      }).catch((err) => console.error('Failed to sync calendar on completion:', err))
+
+      // Remove from view
+      setActionItems((prev) => prev.filter((i) => i.id !== paymentReminder.id))
+      setStats((prev) => ({ ...prev, reminders: Math.max(0, prev.reminders - 1) }))
+    } catch (err) {
+      console.error('Error resolving action item with payment:', err)
+      throw err
+    } finally {
+      setProcessingId(null)
+      setPaymentReminder(null)
     }
   }
 
@@ -835,6 +872,21 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {paymentReminder && paymentReminder.rawItem && (
+        <PremiumPaymentModal
+          isOpen={paymentModalOpen}
+          onClose={() => {
+            setPaymentModalOpen(false)
+            setPaymentReminder(null)
+          }}
+          onConfirm={handleConfirmPayment}
+          defaultAmount={paymentReminder.rawItem.policies?.premium_amount || 0}
+          planName={paymentReminder.rawItem.policies?.plan_name || '—'}
+          policyNumber={paymentReminder.rawItem.policies?.policy_number || ''}
+          clientName={paymentReminder.rawItem.customers?.full_name || 'ลูกค้า'}
+        />
+      )}
     </div>
   )
 }

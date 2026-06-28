@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { generatePremiumReminders } from '@/lib/reminders/reminder-service'
 import {
   Loader2,
   ArrowLeft,
@@ -19,7 +20,9 @@ import {
   AlertTriangle,
   ChevronRight,
   Sparkles,
-  Info
+  Info,
+  X,
+  Check
 } from 'lucide-react'
 
 interface Policy {
@@ -61,6 +64,10 @@ export default function PolicyDetailPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [premiumAmount, setPremiumAmount] = useState('')
+  const [isEditingPremium, setIsEditingPremium] = useState(false)
+  const [isSavingPremium, setIsSavingPremium] = useState(false)
+
   useEffect(() => {
     if (!id) return
 
@@ -81,6 +88,7 @@ export default function PolicyDetailPage() {
 
         setPolicy(polData)
         setPolicyNote(polData.policy_note || '')
+        setPremiumAmount(polData.premium_amount ? String(polData.premium_amount) : '')
 
         // 2. Fetch associated customer name
         const { data: custData, error: custErr } = await supabase
@@ -101,6 +109,38 @@ export default function PolicyDetailPage() {
 
     loadPolicyData()
   }, [id, supabase])
+
+  const savePremium = async () => {
+    setIsSavingPremium(true)
+    try {
+      const amt = premiumAmount.trim() === '' ? null : Number(premiumAmount)
+      const { error: updateErr } = await supabase
+        .from('policies')
+        .update({ premium_amount: amt })
+        .eq('id', id)
+
+      if (updateErr) throw updateErr
+      
+      // Update local state
+      setPolicy(prev => prev ? { ...prev, premium_amount: amt } : null)
+      setIsEditingPremium(false)
+
+      // Re-generate premium reminders (handles updated premium amount in descriptions)
+      await generatePremiumReminders(supabase, id)
+      
+      // Sync to GCal
+      fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch: true }),
+      }).catch((err) => console.error('Failed to sync calendar after premium update:', err))
+
+    } catch (err: any) {
+      alert(err.message || 'Failed to save premium amount')
+    } finally {
+      setIsSavingPremium(false)
+    }
+  }
 
   const saveNote = async () => {
     setIsSavingNote(true)
@@ -232,12 +272,51 @@ export default function PolicyDetailPage() {
         </div>
 
         {/* Financial Premium Highlights */}
-        <div className="bg-slate-50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800/50 p-4 rounded-2xl min-w-[200px] text-center md:text-right">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Premium ({policy.payment_frequency})</span>
-          <p className="text-xl font-black text-slate-800 dark:text-slate-100 mt-0.5">
-            ฿{policy.premium_amount?.toLocaleString() || '0'}
-          </p>
-        </div>
+        {isEditingPremium ? (
+          <div className="bg-slate-55 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-850 p-4 rounded-2xl min-w-[200px] text-center md:text-right space-y-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Premium ({policy.payment_frequency})</span>
+            <div className="flex items-center gap-1.5 justify-center md:justify-end">
+              <span className="text-slate-400 font-bold">฿</span>
+              <input
+                type="number"
+                value={premiumAmount}
+                onChange={(e) => setPremiumAmount(e.target.value)}
+                className="w-28 px-2 py-1 text-sm font-bold border border-indigo-400 dark:border-indigo-850 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                placeholder="0"
+                autoFocus
+              />
+              <button
+                onClick={savePremium}
+                disabled={isSavingPremium}
+                className="p-1.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 cursor-pointer"
+              >
+                {isSavingPremium ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                onClick={() => {
+                  setPremiumAmount(policy.premium_amount ? String(policy.premium_amount) : '')
+                  setIsEditingPremium(false)
+                }}
+                disabled={isSavingPremium}
+                className="p-1.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-750 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div 
+            onClick={() => setIsEditingPremium(true)}
+            className="bg-slate-50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800/50 p-4 rounded-2xl min-w-[200px] text-center md:text-right cursor-pointer hover:border-indigo-400 dark:hover:border-indigo-800 hover:bg-slate-100/50 group transition-all"
+          >
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block flex items-center justify-center md:justify-end gap-1 select-none">
+              Premium ({policy.payment_frequency}) <Edit2 className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity text-slate-400" />
+            </span>
+            <p className="text-xl font-black text-slate-800 dark:text-slate-100 mt-0.5 select-none">
+              ฿{policy.premium_amount?.toLocaleString() || '0'}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Grid details */}

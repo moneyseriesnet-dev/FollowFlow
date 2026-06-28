@@ -38,7 +38,8 @@ import {
   Zap,
   User,
   Check,
-  RotateCcw
+  RotateCcw,
+  Coins
 } from 'lucide-react'
 
 const AVAILABLE_ICONS = {
@@ -64,13 +65,16 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   policy_delivery: 'ส่งมอบกรมธรรม์',
   claim_support: 'ช่วยเหลือเคลม',
   follow_up: 'ติดตามงาน',
+  premium_payment: 'เก็บเบี้ยประกัน',
   other: 'อื่นๆ'
 }
 
 import ActivityForm from '@/components/activities/activity-form'
 import GiftForm from '@/components/gifts/gift-form'
 import ReminderModal from '@/components/reminders/reminder-modal'
+import PremiumPaymentModal from '@/components/reminders/premium-payment-modal'
 import { SwipeableList, type SwipeableListItem, type SwipeAction } from '@/components/ui/be-ui-swipeable-list'
+import { completePremiumReminderWithPayment } from '@/lib/reminders/reminder-service'
 
 interface Customer {
   id: string
@@ -135,6 +139,10 @@ export default function CustomerDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [reminderTab, setReminderTab] = useState<'pending' | 'completed'>('pending')
   const [showLevelDropdown, setShowLevelDropdown] = useState(false)
+
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+  const [paymentReminder, setPaymentReminder] = useState<any>(null)
+  const [paymentPolicy, setPaymentPolicy] = useState<Policy | null>(null)
 
   // AI states
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -360,6 +368,16 @@ export default function CustomerDetailPage() {
         return
       }
 
+      // If premium_due reminder is marked done, redirect to payment modal
+      const rawReminder = reminders.find(r => r.id === remId)
+      if (rawReminder && rawReminder.reminder_type === 'premium_due' && rawReminder.policy_id && newStatus === 'done') {
+        const associatedPolicy = policies.find(p => p.id === rawReminder.policy_id)
+        setPaymentReminder(rawReminder)
+        setPaymentPolicy(associatedPolicy || null)
+        setPaymentModalOpen(true)
+        return
+      }
+
       const updateData: any = { status: newStatus }
       if (newStatus === 'done') {
         updateData.completed_at = new Date().toISOString()
@@ -382,6 +400,34 @@ export default function CustomerDetailPage() {
       loadAllData()
     } catch (err: any) {
       alert(err.message || 'Failed to update reminder status')
+    }
+  }
+
+  const handleConfirmPayment = async (amountPaid: number, paymentDate: string) => {
+    if (!paymentReminder) return
+    try {
+      await completePremiumReminderWithPayment(supabase, {
+        policyId: paymentReminder.policy_id!,
+        reminderId: paymentReminder.id,
+        customerId: id,
+        amountPaid: amountPaid,
+        paymentDate: paymentDate,
+      })
+
+      // Trigger calendar sync
+      fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: paymentReminder.id }),
+      }).catch((err) => console.error('Failed to trigger calendar sync on action:', err))
+
+      loadAllData()
+    } catch (err: any) {
+      console.error('Error completing payment:', err)
+      throw err
+    } finally {
+      setPaymentReminder(null)
+      setPaymentPolicy(null)
     }
   }
 
@@ -532,6 +578,8 @@ export default function CustomerDetailPage() {
         return <Heart className="h-4 w-4" />
       case 'follow_up':
         return <Calendar className="h-4 w-4" />
+      case 'premium_payment':
+        return <Coins className="h-4 w-4" />
       default:
         return <Clock className="h-4 w-4" />
     }
@@ -551,6 +599,8 @@ export default function CustomerDetailPage() {
         return 'bg-purple-50 text-purple-600 border-purple-100 dark:bg-purple-950/20 dark:text-purple-400'
       case 'claim_support':
         return 'bg-rose-50 text-rose-600 border-rose-100 dark:bg-rose-950/20 dark:text-rose-400'
+      case 'premium_payment':
+        return 'bg-amber-50 text-amber-650 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400'
       default:
         return 'bg-slate-50 text-slate-650 border-slate-100 dark:bg-slate-800 dark:text-slate-400'
     }
@@ -1899,6 +1949,23 @@ export default function CustomerDetailPage() {
           reminder={activeReminder}
           onClose={() => setActiveReminder(null)}
           onSaved={loadAllData}
+        />
+      )}
+
+      {/* Premium Payment Confirmation Modal */}
+      {paymentReminder && (
+        <PremiumPaymentModal
+          isOpen={paymentModalOpen}
+          onClose={() => {
+            setPaymentModalOpen(false)
+            setPaymentReminder(null)
+            setPaymentPolicy(null)
+          }}
+          onConfirm={handleConfirmPayment}
+          defaultAmount={paymentPolicy?.premium_amount || 0}
+          planName={paymentPolicy?.plan_name || '—'}
+          policyNumber={paymentPolicy?.policy_number || ''}
+          clientName={customer.full_name || 'ลูกค้า'}
         />
       )}
     </div>

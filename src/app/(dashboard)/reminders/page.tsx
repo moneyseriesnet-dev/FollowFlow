@@ -1,26 +1,21 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { rolloverPolicyCycle, scanAndGenerateAllReminders } from '@/lib/reminders/reminder-service'
+import { rolloverPolicyCycle, scanAndGenerateAllReminders, completePremiumReminderWithPayment } from '@/lib/reminders/reminder-service'
 import ReminderModal from '@/components/reminders/reminder-modal'
+import PremiumPaymentModal from '@/components/reminders/premium-payment-modal'
 import {
   Bell,
   Plus,
   Loader2,
-  CheckCircle,
-  Clock,
-  Trash2,
   Calendar,
-  Sparkles,
   Search,
-  Filter,
-  SlidersHorizontal,
   ChevronRight,
   AlertTriangle
 } from 'lucide-react'
-import { differenceInDays, parseISO, format, addDays } from 'date-fns'
+import { parseISO, addDays } from 'date-fns'
 
 interface Reminder {
   id: string
@@ -41,6 +36,13 @@ interface Reminder {
   customers: {
     full_name: string
   } | null
+  policies: {
+    id: string
+    policy_number: string
+    plan_name: string | null
+    company: string
+    premium_amount: number | null
+  } | null
 }
 
 const statusTabs = [
@@ -52,7 +54,7 @@ const statusTabs = [
 ]
 
 export default function RemindersPage() {
-  const supabase = createClient() as any
+  const supabase = useMemo(() => createClient() as any, [])
   const [loading, setLoading] = useState(true)
   const [reminders, setReminders] = useState<Reminder[]>([])
   
@@ -63,19 +65,35 @@ export default function RemindersPage() {
   const [selectedReminder, setSelectedReminder] = useState<Reminder | null>(null)
   const [actionId, setActionId] = useState<string | null>(null)
   const [isScanning, setIsScanning] = useState(false)
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
 
-  const loadReminders = async () => {
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+  const [paymentReminder, setPaymentReminder] = useState<Reminder | null>(null)
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim())
+    }, 250)
+
+    return () => window.clearTimeout(timeout)
+  }, [searchQuery])
+
+  const loadReminders = useCallback(async (options?: { showSpinner?: boolean }) => {
+    const showSpinner = options?.showSpinner ?? true
+    if (showSpinner) setLoading(true)
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
       let query = supabase
         .from('reminders')
-        .select('*, customers(full_name)')
+        .select('*, customers(full_name), policies(id, policy_number, plan_name, company, premium_amount)')
+        .eq('owner_id', user.id)
 
       // Apply Search Filter
-      if (searchQuery.trim()) {
-        query = query.ilike('title', `%${searchQuery.trim()}%`)
+      if (debouncedSearchQuery) {
+        query = query.ilike('title', `%${debouncedSearchQuery}%`)
       }
 
       // Apply Status Tab Filter
@@ -97,47 +115,68 @@ export default function RemindersPage() {
     } catch (err) {
       console.error('Error fetching reminders:', err)
     } finally {
-      setLoading(false)
+      if (showSpinner) setLoading(false)
     }
-  }
+  }, [activeTab, debouncedSearchQuery, selectedType, supabase])
+  const loadRemindersRef = useRef(loadReminders)
 
   useEffect(() => {
-    // Run initial background scan when loading reminders page
+    loadRemindersRef.current = loadReminders
+  }, [loadReminders])
+
+  useEffect(() => {
+    loadReminders()
+  }, [loadReminders])
+
+  useEffect(() => {
+    let isMounted = true
+
+    // Run self-healing reminder generation in the background. The list query
+    // above should not wait for this scanner to finish.
     async function initScan() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      setIsScanning(true)
+
+      if (isMounted) setIsScanning(true)
       try {
-        await scanAndGenerateAllReminders(supabase, user.id)
+        const hasNewReminders = await scanAndGenerateAllReminders(supabase, user.id)
         
-        // Trigger batch sync after background scan finishes to auto-upload newly generated items
-        fetch('/api/calendar/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batch: true }),
-        }).catch((err) => console.error('Failed to run background calendar batch sync:', err))
+        if (hasNewReminders && isMounted) {
+          await loadRemindersRef.current({ showSpinner: false })
+
+          // Trigger batch sync after background scan finishes to auto-upload newly generated items
+          fetch('/api/calendar/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ batch: true }),
+          }).catch((err) => console.error('Failed to run background calendar batch sync:', err))
+        }
       } catch (err) {
         console.error(err)
       } finally {
-        setIsScanning(false)
-        loadReminders()
+        if (isMounted) setIsScanning(false)
       }
     }
     initScan()
-  }, [activeTab, selectedType, searchQuery, supabase])
+
+    return () => {
+      isMounted = false
+    }
+  }, [supabase])
 
   const handleMarkDone = async (reminder: Reminder) => {
+    if (reminder.reminder_type === 'premium_due' && reminder.policy_id) {
+      setPaymentReminder(reminder)
+      setPaymentModalOpen(true)
+      return
+    }
+
     setActionId(reminder.id)
     try {
-      if (reminder.reminder_type === 'premium_due' && reminder.policy_id) {
-        // Triggers dates rollover and next cycle tasks creation
-        await rolloverPolicyCycle(supabase, reminder.policy_id, reminder.id)
-      } else {
-        await supabase
-          .from('reminders')
-          .update({ status: 'done', completed_at: new Date().toISOString() })
-          .eq('id', reminder.id)
-      }
+      await supabase
+        .from('reminders')
+        .update({ status: 'done', completed_at: new Date().toISOString() })
+        .eq('id', reminder.id)
 
       // Trigger Google Calendar Sync
       await fetch('/api/calendar/sync', {
@@ -151,6 +190,35 @@ export default function RemindersPage() {
       console.error('Error completing reminder:', err)
     } finally {
       setActionId(null)
+    }
+  }
+
+  const handleConfirmPayment = async (amountPaid: number, paymentDate: string) => {
+    if (!paymentReminder) return
+    setActionId(paymentReminder.id)
+    try {
+      await completePremiumReminderWithPayment(supabase, {
+        policyId: paymentReminder.policy_id!,
+        reminderId: paymentReminder.id,
+        customerId: paymentReminder.customer_id,
+        amountPaid: amountPaid,
+        paymentDate: paymentDate,
+      })
+
+      // Trigger Google Calendar Sync
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderId: paymentReminder.id }),
+      }).catch((err) => console.error('Failed to sync calendar on completion:', err))
+
+      loadReminders()
+    } catch (err) {
+      console.error('Error completing reminder with payment:', err)
+      throw err
+    } finally {
+      setActionId(null)
+      setPaymentReminder(null)
     }
   }
 
@@ -432,6 +500,22 @@ export default function RemindersPage() {
             setSelectedReminder(null)
             loadReminders()
           }}
+        />
+      )}
+
+      {/* Premium Payment Confirmation Modal */}
+      {paymentReminder && (
+        <PremiumPaymentModal
+          isOpen={paymentModalOpen}
+          onClose={() => {
+            setPaymentModalOpen(false)
+            setPaymentReminder(null)
+          }}
+          onConfirm={handleConfirmPayment}
+          defaultAmount={paymentReminder.policies?.premium_amount || 0}
+          planName={paymentReminder.policies?.plan_name || '—'}
+          policyNumber={paymentReminder.policies?.policy_number || ''}
+          clientName={paymentReminder.customers?.full_name || 'ลูกค้า'}
         />
       )}
     </div>

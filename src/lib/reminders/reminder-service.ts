@@ -281,3 +281,96 @@ export async function rolloverPolicyCycle(supabase: any, policyId: string, remin
   // 4. Generate next cycle's premium reminders
   await generatePremiumReminders(supabase, policyId)
 }
+
+/**
+ * Complete a Premium Due Reminder, recording the payment amount in activities log, and roll over the policy cycle.
+ */
+export async function completePremiumReminderWithPayment(
+  supabase: any,
+  params: {
+    policyId: string
+    reminderId: string
+    customerId: string
+    amountPaid: number
+    paymentDate?: string // defaults to now
+  }
+) {
+  const { policyId, reminderId, customerId, amountPaid, paymentDate } = params
+  const resolvedDate = paymentDate || new Date().toISOString()
+
+  // 1. Mark all pending premium reminders for this policy as done to avoid leftovers
+  const { error: updateRemErr } = await supabase
+    .from('reminders')
+    .update({ status: 'done', completed_at: resolvedDate })
+    .eq('policy_id', policyId)
+    .eq('reminder_type', 'premium_due')
+    .eq('status', 'pending')
+
+  if (updateRemErr) throw updateRemErr
+
+  // 2. Fetch policy details
+  const { data: policy, error: policyErr } = await supabase
+    .from('policies')
+    .select('policy_number, plan_name, company, next_premium_due_date, payment_frequency, owner_id')
+    .eq('id', policyId)
+    .single()
+
+  if (policyErr) throw policyErr
+  if (!policy) return
+
+  // 3. Log the payment activity in the activities table
+  const companyLabel = policy.company === 'AXA' ? 'AXA' : policy.company === 'AIA' ? 'AIA' : 'OTHER'
+  const summaryText = `รับชำระเบี้ยประกันภัย (${companyLabel})`
+  const resultText = `เก็บเบี้ยประกันภัยแผน ${policy.plan_name || '—'} เลขกรมธรรม์ ${policy.policy_number} จำนวน ฿${amountPaid.toLocaleString()} เรียบร้อยแล้ว`
+
+  const { error: actErr } = await supabase
+    .from('activities')
+    .insert({
+      owner_id: policy.owner_id,
+      customer_id: customerId,
+      policy_id: policyId,
+      reminder_id: reminderId,
+      activity_type: 'premium_payment',
+      activity_date: resolvedDate,
+      summary: summaryText,
+      result: resultText,
+      amount_paid: amountPaid,
+      status_after_activity: 'Paid',
+    })
+
+  if (actErr) throw actErr
+
+  // 4. Calculate next due date
+  const currentDueDate = policy.next_premium_due_date ? parseISO(policy.next_premium_due_date) : new Date()
+  let monthsToAdd = 1
+
+  switch (policy.payment_frequency) {
+    case 'quarterly':
+      monthsToAdd = 3
+      break
+    case 'semi_annual':
+      monthsToAdd = 6
+      break
+    case 'annual':
+      monthsToAdd = 12
+      break
+    case 'monthly':
+    default:
+      monthsToAdd = 1
+      break
+  }
+
+  const nextDueDate = addMonths(currentDueDate, monthsToAdd)
+  const nextDueDateStr = formatDate(nextDueDate)
+
+  // 5. Update policy with new premium due date
+  const { error: updatePolicyErr } = await supabase
+    .from('policies')
+    .update({ next_premium_due_date: nextDueDateStr })
+    .eq('id', policyId)
+
+  if (updatePolicyErr) throw updatePolicyErr
+
+  // 6. Generate next cycle's premium reminders
+  await generatePremiumReminders(supabase, policyId)
+}
