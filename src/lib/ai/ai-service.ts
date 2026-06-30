@@ -59,10 +59,36 @@ function runHeuristicAnalysis(
   const overdueCount = premiumDueReminders.filter(r => 
     (r.status === 'pending' || r.status === 'snoozed') && r.due_date < todayStr
   ).length
+  const hasOverdue = overdueCount > 0
+
+  // Count payments completed late within the last 3 years
+  const latePaymentsIn3Years = reminders.filter(r => {
+    if (r.reminder_type !== 'premium_due' || r.status !== 'done' || !r.completed_at) return false
+    try {
+      const compDate = new Date(r.completed_at)
+      const dueDate = new Date(r.due_date)
+      if (compDate <= dueDate) return false
+      
+      const diffInDays = differenceInDays(new Date(), compDate)
+      return diffInDays <= 3 * 365
+    } catch {
+      return false
+    }
+  }).length
+
+  const createdDate = customer.created_at ? new Date(customer.created_at) : new Date()
+  const yearsWithUs = differenceInDays(new Date(), createdDate) / 365
+  const isLessThan3Years = yearsWithUs < 3
 
   // 3. Determine suggested level and risk flag
   const qualifiesForWatchlist = snoozedCount >= 3 || overdueCount >= 1
-  const qualifiesForVip = totalAnnualPremium >= 100000
+  
+  // VIP เกณฑ์ใหม่: เบี้ย >= 200k/ปี AND (ไม่มียอดคงค้างเลย OR จ่ายช้า <= 2 ครั้งใน 3 ปี OR (อยู่ไม่ถึง 3 ปี AND ไม่มียอดคงค้าง))
+  const qualifiesForVip = totalAnnualPremium >= 200000 && (
+    (!hasOverdue) || 
+    (latePaymentsIn3Years <= 2) || 
+    (isLessThan3Years && !hasOverdue)
+  )
 
   let suggestedLevelName = 'Standard'
   let suggestedLevelReason = 'ลูกค้ามีสถานะปกติเบี้ยประกันรวมอยู่ในเกณฑ์เฉลี่ยและไม่มีประวัติการค้างชำระ'
@@ -74,7 +100,7 @@ function runHeuristicAnalysis(
     needsSpecialFollowUp = true
   } else if (qualifiesForVip) {
     suggestedLevelName = 'VIP'
-    suggestedLevelReason = `ลูกค้ามียอดเบี้ยประกันรวมสูง ฿${totalAnnualPremium.toLocaleString()}/ปี ถือเป็นลูกค้ารายใหญ่ที่ควรจัดลำดับการบริการแบบ VIP`
+    suggestedLevelReason = `ลูกค้ามียอดเบี้ยประกันรวมสูง ฿${totalAnnualPremium.toLocaleString()}/ปี และตรงตามเกณฑ์ประวัติการชำระเงินของ VIP (ยอดคงค้าง: ${hasOverdue ? 'มี' : 'ไม่มี'}, จ่ายช้าในช่วง 3 ปี: ${latePaymentsIn3Years} ครั้ง)`
   }
 
   // Fallback to match existing level names if database has lowercase or specific variants
@@ -156,6 +182,59 @@ export async function generateCustomerAnalysis(supabase: any, customerId: string
       aiResult = runHeuristicAnalysis(customer, dbPolicies, dbReminders, dbActivities, dbLevels)
     } else {
       try {
+        // Pre-compute VIP metrics
+        const todayStr = new Date().toISOString().split('T')[0]
+        let totalAnnualPremium = 0
+        dbPolicies.forEach((p: any) => {
+          if (p.policy_status !== 'active') return
+          const amt = Number(p.premium_amount) || 0
+          switch (p.payment_frequency) {
+            case 'monthly':
+              totalAnnualPremium += amt * 12
+              break
+            case 'quarterly':
+              totalAnnualPremium += amt * 4
+              break
+            case 'semi_annual':
+              totalAnnualPremium += amt * 2
+              break
+            case 'annual':
+            default:
+              totalAnnualPremium += amt
+              break
+          }
+        })
+
+        const premiumDueReminders = dbReminders.filter((r: any) => r.reminder_type === 'premium_due')
+        const overdueCount = premiumDueReminders.filter((r: any) => 
+          (r.status === 'pending' || r.status === 'snoozed') && r.due_date < todayStr
+        ).length
+        const hasOverdue = overdueCount > 0
+
+        const latePaymentsIn3Years = dbReminders.filter((r: any) => {
+          if (r.reminder_type !== 'premium_due' || r.status !== 'done' || !r.completed_at) return false
+          try {
+            const compDate = new Date(r.completed_at)
+            const dueDate = new Date(r.due_date)
+            if (compDate <= dueDate) return false
+            const diffInDays = differenceInDays(new Date(), compDate)
+            return diffInDays <= 3 * 365
+          } catch {
+            return false
+          }
+        }).length
+
+        const createdDate = customer.created_at ? new Date(customer.created_at) : new Date()
+        const yearsWithUs = differenceInDays(new Date(), createdDate) / 365
+        const isLessThan3Years = yearsWithUs < 3
+
+        // VIP เกณฑ์ใหม่: เบี้ย >= 200k/ปี AND (ไม่มียอดคงค้างเลย OR จ่ายช้า <= 2 ครั้งใน 3 ปี OR (อยู่ไม่ถึง 3 ปี AND ไม่มียอดคงค้าง))
+        const qualifiesForVip = totalAnnualPremium >= 200000 && (
+          (!hasOverdue) || 
+          (latePaymentsIn3Years <= 2) || 
+          (isLessThan3Years && !hasOverdue)
+        )
+
         // Run Gemini generative analysis
         // Compile context
         const context = {
@@ -163,6 +242,15 @@ export async function generateCustomerAnalysis(supabase: any, customerId: string
           status: customer.status,
           birthDate: customer.birth_date,
           personalNote: customer.personal_note || '—',
+          customerCreatedAt: customer.created_at,
+          metrics: {
+            totalAnnualPremium,
+            hasOverdue,
+            latePaymentsIn3Years,
+            yearsWithUs,
+            isLessThan3Years,
+            qualifiesForVip
+          },
           policies: dbPolicies.map((p: any) => ({
             company: p.company,
             planName: p.plan_name,
@@ -177,6 +265,7 @@ export async function generateCustomerAnalysis(supabase: any, customerId: string
             dueDate: r.due_date,
             status: r.status,
             priority: r.priority,
+            completedAt: r.completed_at
           })),
           recentActivities: dbActivities.slice(0, 5).map((a: any) => ({
             type: a.activity_type,
@@ -194,14 +283,15 @@ export async function generateCustomerAnalysis(supabase: any, customerId: string
 
         Tasks:
         1. Write a 2-3 sentence overview relationship summary in THAI (ai_summary).
-        2. Suggest the best customer level from the "availableLevelNames" list.
-           - Recommend "Watchlist" (or equivalent) if they have overdue premium payments or multiple snoozed premium due reminders.
-           - Recommend "VIP" (or equivalent) if their annual premium volume (convert monthly*12, quarterly*4 etc.) is >= ฿100,000.
-           - Recommend "Standard" (or equivalent) otherwise.
-        3. Explain the reason for level recommendation in THAI.
+        2. Suggest the best customer level from the "availableLevelNames" list:
+           - Suggest "VIP" (or equivalent) if context.metrics.qualifiesForVip is true.
+             Criteria for VIP: must have total annual premium >= ฿200,000 AND (no overdue payments OR <= 2 late payments in 3 years OR (been with us < 3 years and no overdue payments)).
+           - Suggest "Watchlist" (or equivalent) if they have overdue premium payments or multiple snoozed premium due reminders.
+           - Suggest "Standard" (or equivalent) otherwise.
+        3. Explain the reason for level recommendation in THAI. If you recommend VIP, cite their annual premium volume and clean payment history in the explanation.
         4. Recommend 2-3 specific Next Action steps in THAI.
-        5. Draft a short friendly follow-up message template in THAI for the agent to review and send to Somsak.
-        6. Set "needs_special_follow_up" to true if Somsak has any overdue payments.
+        5. Draft a short friendly follow-up message template in THAI for the agent to review and send to this customer.
+        6. Set "needs_special_follow_up" to true if the customer has any overdue payments (context.metrics.hasOverdue is true).
 
         You MUST output a valid raw JSON object matching this schema exactly:
         {

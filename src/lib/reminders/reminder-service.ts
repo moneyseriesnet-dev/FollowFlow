@@ -298,13 +298,22 @@ export async function completePremiumReminderWithPayment(
   const { policyId, reminderId, customerId, amountPaid, paymentDate } = params
   const resolvedDate = paymentDate || new Date().toISOString()
 
-  // 1. Mark all pending premium reminders for this policy as done to avoid leftovers
+  // 1. Mark the specific reminder as done and record the amount paid
+  const { error: updateSpecificRemErr } = await supabase
+    .from('reminders')
+    .update({ status: 'done', completed_at: resolvedDate, amount_paid: amountPaid })
+    .eq('id', reminderId)
+
+  if (updateSpecificRemErr) throw updateSpecificRemErr
+
+  // 1b. Mark other pending premium reminders for this policy as done to avoid leftovers
   const { error: updateRemErr } = await supabase
     .from('reminders')
     .update({ status: 'done', completed_at: resolvedDate })
     .eq('policy_id', policyId)
     .eq('reminder_type', 'premium_due')
     .eq('status', 'pending')
+    .neq('id', reminderId)
 
   if (updateRemErr) throw updateRemErr
 

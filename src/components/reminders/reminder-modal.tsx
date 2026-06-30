@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { X, Save, AlertTriangle, Loader2 } from 'lucide-react'
+import { completePremiumReminderWithPayment } from '@/lib/reminders/reminder-service'
 
 interface ReminderModalProps {
   reminder: any
@@ -20,17 +21,38 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
   const [googleSyncEnabled, setGoogleSyncEnabled] = useState(reminder.google_sync_enabled !== false)
   const [error, setError] = useState<string | null>(null)
 
+  // Premium payment logging fields
+  const isPremiumDue = reminder.reminder_type === 'premium_due'
+  const [amountPaid, setAmountPaid] = useState<string>(() => {
+    if (reminder.amount_paid !== undefined && reminder.amount_paid !== null) {
+      return String(reminder.amount_paid)
+    }
+    return String(reminder.policies?.premium_amount || '')
+  })
+  const [paymentDate, setPaymentDate] = useState<string>(() => {
+    if (reminder.completed_at) {
+      return reminder.completed_at.split('T')[0]
+    }
+    const d = new Date()
+    const offset = d.getTimezoneOffset() * 60000
+    return new Date(d.getTime() - offset).toISOString().split('T')[0]
+  })
+
   const handleSave = async () => {
     setLoading(true)
     setError(null)
 
     try {
-      const payload = {
-        status,
+      // 1. Update standard details
+      const payload: any = {
         priority,
         next_action_date: nextActionDate || null,
         description: description.trim() || null,
         google_sync_enabled: googleSyncEnabled,
+      }
+
+      if (isPremiumDue) {
+        payload.amount_paid = amountPaid ? parseFloat(amountPaid) : null
       }
 
       const { error: saveErr } = await supabase
@@ -39,6 +61,36 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
         .eq('id', reminder.id)
 
       if (saveErr) throw saveErr
+
+      // 2. Perform special payment rollover if status is set to Done for premium due
+      if (isPremiumDue && status === 'done' && reminder.policy_id) {
+        const amt = parseFloat(amountPaid)
+        if (isNaN(amt) || amt < 0) {
+          throw new Error('กรุณาระบุจำนวนเงินชำระจริงที่ถูกต้อง')
+        }
+        const fullISODate = new Date(`${paymentDate}T12:00:00`).toISOString()
+
+        await completePremiumReminderWithPayment(supabase, {
+          policyId: reminder.policy_id,
+          reminderId: reminder.id,
+          customerId: reminder.customer_id,
+          amountPaid: amt,
+          paymentDate: fullISODate,
+        })
+      } else {
+        // Otherwise, perform a simple status update
+        const updatePayload: any = { status }
+        if (isPremiumDue) {
+          updatePayload.amount_paid = amountPaid ? parseFloat(amountPaid) : null
+        }
+
+        const { error: statusErr } = await supabase
+          .from('reminders')
+          .update(updatePayload)
+          .eq('id', reminder.id)
+
+        if (statusErr) throw statusErr
+      }
 
       // Trigger calendar sync asynchronously
       fetch('/api/calendar/sync', {
@@ -74,7 +126,7 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
           </div>
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-slate-500"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-slate-500 hover:text-slate-800 transition-colors"
           >
             <X className="h-5 w-5" />
           </button>
@@ -88,6 +140,43 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
 
         {/* Inputs */}
         <div className="space-y-4 text-xs">
+          {/* Policy Details for Premium Due */}
+          {isPremiumDue && (
+            <div className="space-y-3">
+              <div className="p-3.5 bg-indigo-50/55 dark:bg-indigo-950/20 rounded-2xl border border-indigo-100/50 dark:border-indigo-950/30 text-xs text-slate-700 dark:text-slate-350 space-y-1 select-none">
+                <p className="text-[10px] font-bold text-indigo-650 dark:text-indigo-400 uppercase tracking-wider">ข้อมูลกรมธรรม์และยอดค้างชำระ</p>
+                <p className="font-semibold text-slate-900 dark:text-white">ลูกค้า: {reminder.customers?.full_name || 'ลูกค้า'}</p>
+                <p>แผนประกัน: {reminder.policies?.plan_name || '—'}</p>
+                <p className="font-mono text-[11px]">เลขที่กรมธรรม์: {reminder.policies?.policy_number || '—'}</p>
+                <p>กำหนดชำระ (Due Date): {reminder.due_date}</p>
+              </div>
+
+              {/* Amount expected vs collected fields */}
+              <div className="grid grid-cols-2 gap-4 p-3 bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850 rounded-2xl">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1 select-none">
+                    เบี้ยประกันตามกำหนด (฿)
+                  </label>
+                  <div className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/60 text-slate-550 dark:text-slate-400 flex items-center font-bold">
+                    ฿{reminder.policies?.premium_amount?.toLocaleString() || '0'}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide mb-1">
+                    ยอดชำระจริง (฿)
+                  </label>
+                  <input
+                    type="number"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-850 bg-white dark:bg-slate-900 focus:outline-none font-bold text-slate-900 dark:text-white"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">
               Description (รายละเอียด)
@@ -133,6 +222,22 @@ export default function ReminderModal({ reminder, onClose, onSaved }: ReminderMo
               </select>
             </div>
           </div>
+
+          {/* Payment Details Form if Status is Done for Premium Due */}
+          {isPremiumDue && status === 'done' && (
+            <div className="p-3 bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850 rounded-2xl animate-in fade-in slide-in-from-top-1 duration-200">
+              <label className="block text-[10px] font-bold text-slate-455 dark:text-slate-500 uppercase tracking-wide mb-1">
+                วันที่ชำระเงิน
+              </label>
+              <input
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                className="w-full h-10 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none font-semibold text-slate-900 dark:text-white"
+                required
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">

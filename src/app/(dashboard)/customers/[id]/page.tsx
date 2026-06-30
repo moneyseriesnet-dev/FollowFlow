@@ -222,7 +222,7 @@ export default function CustomerDetailPage() {
       // 4. Fetch customer reminders
       const { data: remsData, error: remsErr } = await supabase
         .from('reminders')
-        .select('*')
+        .select('*, policies(id, policy_number, plan_name, company, premium_amount)')
         .eq('customer_id', id)
         .order('due_date', { ascending: true })
 
