@@ -609,32 +609,32 @@ export default function DashboardPage() {
         className={`p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-900 flex flex-row items-center gap-4 transition-all hover:shadow-md ${getUrgencyClasses(item.level)}`}
       >
         {showDaysBadge && (
-          <div className={`flex flex-col items-center justify-center shrink-0 w-16 h-16 rounded-xl border text-center p-1.5 select-none shadow-sm ${
+          <div className={`flex flex-col items-center justify-center shrink-0 w-12 h-12 sm:w-16 sm:h-16 rounded-xl border text-center p-1 select-none shadow-sm ${
             item.level === 'critical'
               ? 'bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:border-rose-900/50 dark:text-rose-400'
               : item.level === 'warning'
               ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-400'
               : 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/20 dark:border-indigo-900/50 dark:text-indigo-400'
           }`}>
-            <span className="text-[9px] uppercase tracking-wider font-extrabold opacity-80">
+            <span className="text-[8px] sm:text-[9px] uppercase tracking-wider font-extrabold opacity-80">
               {daysUntilDue < 0 ? 'เกิน' : 'อีก'}
             </span>
-            <span className="text-xl font-black leading-none my-0.5">
+            <span className="text-lg sm:text-xl font-black leading-none my-0.5">
               {Math.abs(daysUntilDue)}
             </span>
-            <span className="text-[9px] font-extrabold opacity-80">
+            <span className="text-[8px] sm:text-[9px] font-extrabold opacity-80">
               วัน
             </span>
           </div>
         )}
 
-        <div className="space-y-1.5 flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[9px] font-bold tracking-wider uppercase bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-750 shadow-sm text-slate-655 dark:text-slate-350">
+        <div className="space-y-0.5 sm:space-y-1.5 flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[8px] sm:text-[9px] font-bold tracking-wider uppercase bg-slate-50 dark:bg-slate-850 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-750 shadow-sm text-slate-655 dark:text-slate-350">
               {item.priorityLabel}
             </span>
             {item.dueDate && (
-              <span className="text-[9px] font-semibold text-slate-500 flex items-center gap-0.5">
+              <span className="text-[8px] sm:text-[9px] font-semibold text-slate-500 flex items-center gap-0.5">
                 <Calendar className="h-3 w-3" />
                 Due: {item.dueDate}
               </span>
@@ -657,46 +657,46 @@ export default function DashboardPage() {
               onClick={() => setActiveReminder(item.rawItem)}
               className="text-left focus:outline-none block w-full"
             >
-              <h4 className="text-xs font-bold text-slate-850 dark:text-slate-100 hover:text-indigo-650 dark:hover:text-indigo-400 transition-colors line-clamp-1 leading-snug">
+              <h4 className="text-[11px] sm:text-xs font-bold text-slate-850 dark:text-slate-100 hover:text-indigo-650 dark:hover:text-indigo-400 transition-colors line-clamp-1 leading-snug">
                 {item.title}
               </h4>
             </button>
           ) : (
             <Link href={item.link}>
-              <h4 className="text-xs font-bold text-slate-850 dark:text-slate-100 hover:text-indigo-650 dark:hover:text-indigo-400 transition-colors line-clamp-1 leading-snug">
+              <h4 className="text-[11px] sm:text-xs font-bold text-slate-850 dark:text-slate-100 hover:text-indigo-650 dark:hover:text-indigo-400 transition-colors line-clamp-1 leading-snug">
                 {item.title}
               </h4>
             </Link>
           )}
-          <p className="text-[10px] text-slate-500 leading-normal line-clamp-2">
+          <p className="text-[9px] sm:text-[10px] text-slate-500 leading-normal line-clamp-1 sm:line-clamp-2">
             {item.subtitle}
           </p>
         </div>
 
-        <div className="flex gap-2 items-center justify-end shrink-0">
+        <div className="flex gap-1.5 sm:gap-2 items-center justify-end shrink-0">
           {item.type === 'reminder' ? (
             <button
               onClick={() => handleMarkDone(item)}
               disabled={processingId === item.id}
-              className="flex h-8 px-3 items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold cursor-pointer disabled:opacity-50 transition-all shadow-sm shadow-indigo-600/10"
+              className="flex h-7 sm:h-8 w-7 sm:w-auto sm:px-3 items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-bold cursor-pointer disabled:opacity-50 transition-all shadow-sm shadow-indigo-600/10"
             >
               {processingId === item.id ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <>
                   <CheckCircle className="h-3.5 w-3.5" />
-                  Mark Done
+                  <span className="hidden sm:inline">Mark Done</span>
                 </>
               )}
             </button>
           ) : (
-            <div className="flex gap-1.5">
+            <div className="flex gap-1 sm:gap-1.5">
               {item.rawItem.phone && (
                 <a
                   href={`tel:${item.rawItem.phone}`}
-                  className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-750 text-slate-655 dark:text-slate-355 transition-all"
+                  className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg sm:rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-750 text-slate-655 dark:text-slate-355 transition-all"
                 >
-                  <Phone className="h-3.5 w-3.5 text-slate-650 dark:text-slate-400" />
+                  <Phone className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-slate-650 dark:text-slate-400" />
                 </a>
               )}
               {item.rawItem.line_id && (
@@ -704,9 +704,9 @@ export default function DashboardPage() {
                   href={`https://line.me/ti/p/~${item.rawItem.line_id}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-750 text-slate-655 dark:text-slate-355 transition-all"
+                  className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg sm:rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-750 text-slate-655 dark:text-slate-355 transition-all"
                 >
-                  <MessageCircle className="h-3.5 w-3.5 text-slate-655 dark:text-slate-400" />
+                  <MessageCircle className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-slate-655 dark:text-slate-400" />
                 </a>
               )}
             </div>
@@ -715,9 +715,9 @@ export default function DashboardPage() {
           {item.type === 'reminder' ? (
             <button
               onClick={() => setActiveReminder(item.rawItem)}
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-all focus:outline-none"
+              className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg sm:rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-550 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-all focus:outline-none"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </button>
           ) : (
             <Link
